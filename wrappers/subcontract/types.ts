@@ -5,7 +5,7 @@ import { Address, beginCell, Cell, toNano } from '@ton/core';
 // These match the constants in contracts/subcontract/static.tolk
 export const GAS_COST_FORWARD = toNano("0.005"); // 0.0031816 + buffer
 export const GAS_COST_FORWARD_WITH_INIT = toNano("0.01"); // Higher cost for deploy messages
-export const GAS_COST_MANUAL_DEPLOY = toNano("0.4"); // Manual deployment gas cost (from ton_game/contracts/subcontract/static.tolk)
+export const GAS_COST_MANUAL_DEPLOY = toNano("0.4"); // Manual deployment gas cost (from contracts/subcontract/static.tolk)
 // Opcodes
 export const Opcodes = {
     OP_FORWARD: 0xf1c65e14,

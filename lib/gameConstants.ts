@@ -4,8 +4,8 @@
  *
  * Single source of truth for the *non-secret* constants other projects
  * (ton_site, new_tg_bot, ton_provider_system, …) need to stay in sync with
- * `ton_game`: opcodes, error codes, gas costs, TON amounts, enums and the
- * on-chain storage layout.
+ * the GM Ultimate (`gm_ultimate_ton_smart_contracts`) contracts: opcodes,
+ * error codes, gas costs, TON amounts, enums and the on-chain storage layout.
  *
  * Provenance:
  *  - Opcodes / gas costs / TON amounts / enums / storage layout are imported
@@ -244,7 +244,8 @@ export function buildGameConstants(): GameConstants {
     return {
         schemaVersion: CONSTANTS_SCHEMA_VERSION,
         _note:
-            'Single source of truth for ton_game opcodes/errors/constants. ' +
+            'Single source of truth for the GM Ultimate (gm_ultimate_ton_smart_contracts) ' +
+            'contract opcodes/errors/constants. ' +
             'opcodes are "0x"-hex strings (use Number(v) for the integer); ' +
             'gasCosts and amounts are decimal nanoTON/nano-unit strings; ' +
             'errors are parsed live from contracts/**/*.tolk.',

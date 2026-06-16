@@ -36,7 +36,7 @@ atomically, and leaves the old R\* inert.
 
 ### Phase 0 — Pre-flight (no sends)
 ```
-# from the ton_game repo, with deployment_info/deployment_latest.json present for the network
+# from this repo, with deployment_info/deployment_latest.json present for the network
 npx ts-node scripts/swapRetranslator.ts --mainnet          # DRY-RUN: reads live R*, prints the plan
 ```
 Confirm the printed plan:

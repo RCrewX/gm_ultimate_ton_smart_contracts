@@ -1,6 +1,7 @@
 {
     "name": "gm_ultimate_ton_smart_contracts",
     "version": "0.0.1",
+    "description": "GM Ultimate — a system of TON/Tolk smart contracts: GameManager + swappable Retranslator, RUDA token, games, and TEP reference implementations.",
     "private": true,
     "license": "UNLICENSED",
     "scripts": {

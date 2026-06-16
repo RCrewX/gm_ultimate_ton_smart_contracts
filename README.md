@@ -2,15 +2,29 @@
 
 > Proprietary — source-available. See [LICENSE](./LICENSE) (All Rights Reserved).
 
-TON/Tolk smart-contract game on **Blueprint**: players explore a 2D coordinate grid, battle cells,
-earn the **RUDA** jetton, and upgrade their ships. This repository is the **source of truth** for
-contract opcodes, gas costs, stateInit and deterministic addresses consumed by downstream apps.
+**GM Ultimate** is a system of TON/Tolk smart contracts built on **Blueprint** — not a single game.
+The pieces compose into a swappable on-chain platform:
 
-## Overview
+- **GameManager (GM)** — the stable pipe and sole on-chain authority: owner/admin of the **RUDA**
+  minter and all subcontracts. GM forwards inbound requests and never embeds game logic.
+- **Retranslator (`R*`)** — the swappable *brain* behind GM. Holds the registries and validation
+  logic and can be redeployed/upgraded and re-pointed **without recompiling or redeploying GM**.
+- **RUDA jetton** — the platform token (TEP-74), minted by GM on behalf of the games.
+- **Games** — currently a **race game** (explore a 2D coordinate grid, battle cells, earn RUDA,
+  upgrade ships) and a **Soulless Slot Machine** (TryLuck spin → RUDA mint on a 5% win). The race
+  game is **one consumer** of the system, not the whole product.
+- **Subcontract** — owner relay with the only Ed25519-signed external entrypoint (deploy for users
+  without wallets).
+- **In-house TEP reference impls** — jetton, nft, sbt, sbtn.
 
-This project implements a complete game system on TON blockchain using Tolk (Tact-like language). Players control ships that move through coordinate cells, each with random HP and rewards. Ships can explore new cells, battle existing ones, and earn jettons as rewards. Players can also upgrade their ships by transferring jettons to the game manager.
+This repository is the **source of truth** for contract opcodes, gas costs, stateInit and
+deterministic addresses consumed by downstream apps.
 
-## Features
+## The race game
+
+One of the games on top of the system. Players control ships that move through coordinate cells,
+each with random HP and rewards. Ships explore new cells, battle existing ones, and earn jettons as
+rewards. Players upgrade their ships by transferring jettons to the GameManager.
 
 - **Ship Movement**: Navigate through a 2D coordinate grid (X can be negative, Y always positive)
 - **Combat System**: Battle cells with HP-based combat mechanics
