@@ -86,6 +86,14 @@ import {
 } from '../wrappers/subcontract/types';
 
 import {
+    Opcodes as UbpsOpcodes,
+    MAX_A as UBPS_MAX_A,
+    MAX_BS as UBPS_MAX_BS,
+    UBPS_MAX_STRING_BYTES,
+    UBPS_MIN_OP_VALUE,
+} from '../wrappers/ubps/types';
+
+import {
     Opcodes as TrgOpcodes,
     JettonUsageMode,
     BASIC_STORAGE_TAX,
@@ -151,7 +159,14 @@ import { SBTPrinterOp } from '../wrappers/printers/sbt_printer/SBTPrinter';
 // widths (pubkey/seqno/validUntil/movesLeft/moveMode/signature) under storageLayout. The
 // signed external is `ShipExternalEnvelope{ signature:bits512, ^SessionMoveInner }` where
 // SessionMoveInner = seqno:u32 validUntil:u32 moveMode:u8, sent directly to the SHIP.
-export const CONSTANTS_SCHEMA_VERSION = 5;
+// v6: UBPS module published (independent contract tree: master + Unit + Question +
+// Answer + BeliefSet). ADDED: `opcodes.ubps`, `errors.ubps` (600..608, live-parsed),
+// `gasCosts.ubps` (UBPS_MIN_OP_VALUE), and `gameConstants` keys UBPS_MAX_A /
+// UBPS_MAX_BS / UBPS_MAX_STRING_BYTES. ALSO: R* `GamesInfo` moved from the anonymous
+// mode-tagged `all_games` list to NAMED SLOTS {active_game, ssm, ton_race_game,
+// ubps}; the `ubps` slot is registration-only (NEVER reward-authorized). The
+// published contractCodes/addresses now include `games.ubps`.
+export const CONSTANTS_SCHEMA_VERSION = 6;
 
 // ============================================================================
 // Serialisation helpers
@@ -261,6 +276,9 @@ export function buildGameConstants(): GameConstants {
             // body live on R*; the item-flow ops live on the NFT printer item/coll.
             anvil: hexMap(ANVIL_OPCODES),
             subcontract: hexMap(SubcontractOpcodes),
+            // UBPS module (independent tree): master ops, master->child activations,
+            // and the Unit SetPointer. Not part of the GM/R* reward pipe.
+            ubps: hexMap(UbpsOpcodes),
             tonRaceGame: hexMap(TrgOpcodes),
             jetton: hexMap(staticNumberMap(JettonOp as unknown as Record<string, unknown>)),
             nft: hexMap(NftOp),
@@ -281,6 +299,7 @@ export function buildGameConstants(): GameConstants {
             retranslator: parseErrorCodes('contracts/game_manager/retranslator.tolk'),
             soullessSlotMachine: parseErrorCodes('contracts/soulless_slot_machine/static.tolk'),
             subcontract: parseErrorCodes('contracts/subcontract/static.tolk'),
+            ubps: parseErrorCodes('contracts/ubps/static.tolk'),
             tonRaceGame: parseErrorCodes('contracts/ton_race_game/static/errors.tolk'),
             jetton: { ...staticNumberMap(JettonErrors as unknown as Record<string, unknown>), ...parseErrorCodes('contracts/tep/jetton/errors.tolk') },
             nft: parseErrorCodes('contracts/tep/nft/errors.tolk'),
@@ -319,6 +338,9 @@ export function buildGameConstants(): GameConstants {
                 GAS_COST_FORWARD: nano(GAS_COST_FORWARD),
                 GAS_COST_FORWARD_WITH_INIT: nano(GAS_COST_FORWARD_WITH_INIT),
                 GAS_COST_MANUAL_DEPLOY: nano(GAS_COST_MANUAL_DEPLOY),
+            },
+            ubps: {
+                UBPS_MIN_OP_VALUE: nano(UBPS_MIN_OP_VALUE),
             },
             tonRaceGame: {
                 GAS_COST_REQUEST_SHIP_ADDRESS: nano(GAS_COST_REQUEST_SHIP_ADDRESS),
@@ -372,6 +394,11 @@ export function buildGameConstants(): GameConstants {
             // ⚒ multisplav provenance Bloom filter geometry (the `seen` field).
             ANVIL_MULTISPLAV_FILTER_BITS: MULTISPLAV_FILTER_BITS,
             ANVIL_MULTISPLAV_FILTER_K: MULTISPLAV_FILTER_K,
+            // UBPS BeliefSet caps + the single-cell string-length bound (so the
+            // on-chain SHA256U id matches the off-chain sha256 of the UTF-8 bytes).
+            UBPS_MAX_A,
+            UBPS_MAX_BS,
+            UBPS_MAX_STRING_BYTES,
         },
 
         enums: {

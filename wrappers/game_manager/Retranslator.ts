@@ -129,7 +129,12 @@ export class Retranslator implements Contract {
         const cell = result.stack.readCellOpt();
         if (!cell) return null;
         const s = cell.beginParse();
-        return { active_game: s.loadAddress(), all_games: s.loadRef() };
+        const active_game = s.loadAddress();
+        const ssm = s.loadMaybeAddress();
+        const ton_race_game = s.loadMaybeAddress();
+        const extra = s.loadRef().beginParse();
+        const ubps = extra.loadMaybeAddress();
+        return { active_game, ssm, ton_race_game, ubps };
     }
 
     async getToolsInfo(provider: ContractProvider): Promise<Cell | null> {

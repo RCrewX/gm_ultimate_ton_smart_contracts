@@ -19,13 +19,24 @@ describe('GameManager New Features (Retranslator wiring)', () => {
         SC_System = null as any;
     });
 
-    // Relay a SetGamesInfo to R* through GM.
-    async function setGamesInfo(active_game: Address, all_games: any) {
+    // Relay a SetGamesInfo to R* through GM. Named slots: active_game MUST equal the
+    // ssm or ton_race_game slot; ubps is registration-only.
+    async function setGamesInfo(info: {
+        active_game: Address;
+        ssm?: Address | null;
+        ton_race_game?: Address | null;
+        ubps?: Address | null;
+    }) {
         return SC_System.gameManager.sendRedirectMessage(
             SC_System.ownerAccount.getSender(),
             toNano('1'),
             SC_System.retranslator.address,
-            Retranslator.setGamesInfoMessage({ active_game, all_games }),
+            Retranslator.setGamesInfoMessage({
+                active_game: info.active_game,
+                ssm: info.ssm ?? null,
+                ton_race_game: info.ton_race_game ?? null,
+                ubps: info.ubps ?? null,
+            }),
             toNano('0.9'),
         );
     }
@@ -65,13 +76,10 @@ describe('GameManager New Features (Retranslator wiring)', () => {
 
     it('SetGamesInfo on R* (via redirect) - owner can set games info with validation', async () => {
         const game = SC_System.game;
-        const allGamesCell = beginCell()
-            .storeUint(1, 2).storeAddress(game.address) // active_game (first)
-            .storeUint(1, 2).storeAddress(game.address) // second game (same for test)
-            .storeUint(0, 2)
-            .endCell();
-
-        SC_System.messageResult = await setGamesInfo(game.address, allGamesCell);
+        SC_System.messageResult = await setGamesInfo({
+            active_game: game.address,
+            ton_race_game: game.address,
+        });
         expect(SC_System.messageResult.transactions).toHaveTransaction({
             from: SC_System.gameManager.address,
             to: SC_System.retranslator.address,
@@ -83,15 +91,15 @@ describe('GameManager New Features (Retranslator wiring)', () => {
         expect(storedGamesInfo?.active_game).toEqualAddress(game.address);
     });
 
-    it('SetGamesInfo on R* - validation fails if first game is not active_game', async () => {
+    it('SetGamesInfo on R* - validation fails if active_game is not a reward slot', async () => {
         const game = SC_System.game;
         const otherGame = await SC_System.blockchain.treasury('otherGame');
-        const allGamesCell = beginCell()
-            .storeUint(1, 2).storeAddress(otherGame.address) // wrong first game
-            .storeUint(0, 2)
-            .endCell();
-
-        SC_System.messageResult = await setGamesInfo(game.address, allGamesCell);
+        // active_game (game) is not present in either reward slot -> 929.
+        SC_System.messageResult = await setGamesInfo({
+            active_game: game.address,
+            ssm: null,
+            ton_race_game: otherGame.address,
+        });
         expect(SC_System.messageResult.transactions).toHaveTransaction({
             from: SC_System.gameManager.address,
             to: SC_System.retranslator.address,
@@ -100,34 +108,19 @@ describe('GameManager New Features (Retranslator wiring)', () => {
         });
     });
 
-    it('SetGamesInfo on R* with 7 games - verify structure', async () => {
+    // Replaces the former "7-game all_games list" structural test: the registry is
+    // now NAMED SLOTS, so we set ssm + ton_race_game + ubps and read them back.
+    it('SetGamesInfo on R* with named slots - verify structure', async () => {
         const game = SC_System.game;
-        const games: Address[] = [game.address];
-        for (let i = 1; i < 7; i++) {
-            const gameTreasury = await SC_System.blockchain.treasury(`game${i}`);
-            games.push(gameTreasury.address);
-        }
+        const ssmStandIn = await SC_System.blockchain.treasury('ssmGame');
+        const ubpsStandIn = await SC_System.blockchain.treasury('ubpsMaster');
 
-        const firstCell = beginCell()
-            .storeUint(1, 2).storeAddress(games[0])
-            .storeUint(1, 2).storeAddress(games[1])
-            .storeUint(2, 2) // go to ref
-            .endCell();
-        const secondCell = beginCell()
-            .storeUint(1, 2).storeAddress(games[2])
-            .storeUint(1, 2).storeAddress(games[3])
-            .storeUint(1, 2).storeAddress(games[4])
-            .storeUint(2, 2) // go to ref
-            .endCell();
-        const thirdCell = beginCell()
-            .storeUint(1, 2).storeAddress(games[5])
-            .storeUint(1, 2).storeAddress(games[6])
-            .storeUint(0, 2)
-            .endCell();
-        const secondCellWithRef = beginCell().storeBuilder(secondCell.asBuilder()).storeRef(thirdCell).endCell();
-        const allGamesCell = beginCell().storeBuilder(firstCell.asBuilder()).storeRef(secondCellWithRef).endCell();
-
-        SC_System.messageResult = await setGamesInfo(games[0], allGamesCell);
+        SC_System.messageResult = await setGamesInfo({
+            active_game: game.address,
+            ssm: ssmStandIn.address,
+            ton_race_game: game.address,
+            ubps: ubpsStandIn.address,
+        });
         expect(SC_System.messageResult.transactions).toHaveTransaction({
             from: SC_System.gameManager.address,
             to: SC_System.retranslator.address,
@@ -136,12 +129,25 @@ describe('GameManager New Features (Retranslator wiring)', () => {
 
         const storedGamesInfo = await SC_System.retranslator.getGamesInfo();
         expect(storedGamesInfo).not.toBeNull();
-        expect(storedGamesInfo?.active_game).toEqualAddress(games[0]);
+        expect(storedGamesInfo?.active_game).toEqualAddress(game.address);
+        expect(storedGamesInfo?.ssm).toEqualAddress(ssmStandIn.address);
+        expect(storedGamesInfo?.ton_race_game).toEqualAddress(game.address);
+        expect(storedGamesInfo?.ubps).toEqualAddress(ubpsStandIn.address);
+    });
 
-        const allGamesSlice = storedGamesInfo!.all_games.beginParse();
-        expect(allGamesSlice.loadUint(2)).toBe(1);
-        expect(allGamesSlice.loadAddress()).toEqualAddress(games[0]);
-        expect(allGamesSlice.loadUint(2)).toBe(1);
-        expect(allGamesSlice.loadAddress()).toEqualAddress(games[1]);
+    // Replaces the former "invalid first game" case: active_game must be a reward slot.
+    it('SetGamesInfo on R* rejects an active_game that is not a reward slot (929)', async () => {
+        const stranger = await SC_System.blockchain.treasury('stranger');
+        SC_System.messageResult = await setGamesInfo({
+            active_game: stranger.address, // matches neither ssm nor ton_race_game
+            ssm: null,
+            ton_race_game: SC_System.game.address,
+        });
+        expect(SC_System.messageResult.transactions).toHaveTransaction({
+            from: SC_System.gameManager.address,
+            to: SC_System.retranslator.address,
+            success: false,
+            exitCode: 929, // ERR_INVALID_GAMES_INFO
+        });
     });
 });

@@ -206,15 +206,17 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
     it('mint NFT (registered active game initiator) is allowed', async () => {
         // Register a treasury as the active game so we can send the R1 from it.
         const gameTreasury = await S.blockchain.treasury('gameTreasury');
-        const allGames = beginCell()
-            .storeUint(1, 2).storeAddress(gameTreasury.address)
-            .storeUint(0, 2)
-            .endCell();
         await S.gameManager.sendRedirectMessage(
             S.ownerAccount.getSender(),
             toNano('1'),
             S.retranslator.address,
-            Retranslator.setGamesInfoMessage({ active_game: gameTreasury.address, all_games: allGames }),
+            // Register the treasury in the ton_race_game reward slot and make it active.
+            Retranslator.setGamesInfoMessage({
+                active_game: gameTreasury.address,
+                ssm: null,
+                ton_race_game: gameTreasury.address,
+                ubps: null,
+            }),
             toNano('0.9'),
         );
 
@@ -237,15 +239,17 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
     it('mint SBT by a registered game is REJECTED (SBT create is owner/GM-only)', async () => {
         // Register a treasury as the active game.
         const gameTreasury = await S.blockchain.treasury('sbtGameTreasury');
-        const allGames = beginCell()
-            .storeUint(1, 2).storeAddress(gameTreasury.address)
-            .storeUint(0, 2)
-            .endCell();
         await S.gameManager.sendRedirectMessage(
             S.ownerAccount.getSender(),
             toNano('1'),
             S.retranslator.address,
-            Retranslator.setGamesInfoMessage({ active_game: gameTreasury.address, all_games: allGames }),
+            // Register the treasury in the ton_race_game reward slot and make it active.
+            Retranslator.setGamesInfoMessage({
+                active_game: gameTreasury.address,
+                ssm: null,
+                ton_race_game: gameTreasury.address,
+                ubps: null,
+            }),
             toNano('0.9'),
         );
 

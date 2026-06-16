@@ -19,6 +19,7 @@ import { Retranslator } from '../../wrappers/game_manager/Retranslator';
 import { Game } from '../../wrappers/ton_race_game/Game';
 import { Ship } from '../../wrappers/ton_race_game/Ship';
 import { SoullessSlotMachine } from '../../wrappers/soulless_slot_machine/SoullessSlotMachine';
+import { UBPS } from '../../wrappers/ubps/UBPS';
 import { JettonMinter, jettonContentToCell } from '../../wrappers/tep/jetton/JettonMinter';
 import { JettonWallet } from '../../wrappers/tep/jetton/JettonWallet';
 import { Subcontract } from '../../wrappers/subcontract/Subcontract';
@@ -46,6 +47,12 @@ export interface CompiledContracts {
     coordinateCellCode: Cell;
     ssmCode: Cell;
     ssmSlotCode: Cell;
+    // UBPS module (independent tree): master + 4 child types.
+    ubpsCode: Cell;
+    ubpsUnitCode: Cell;
+    ubpsQuestionCode: Cell;
+    ubpsAnswerCode: Cell;
+    ubpsBeliefSetCode: Cell;
     jettonWalletCode: Cell;
     jettonMinterCode: Cell;
     subcontractCode: Cell;
@@ -70,6 +77,11 @@ export async function compileAllContracts(): Promise<CompiledContracts> {
         coordinateCellCode: await compile('CoordinateCell'),
         ssmCode: await compile('SoullessSlotMachine'),
         ssmSlotCode: await compile('SSMSlot'),
+        ubpsCode: await compile('UBPS'),
+        ubpsUnitCode: await compile('UBPSUnit'),
+        ubpsQuestionCode: await compile('UBPSQuestion'),
+        ubpsAnswerCode: await compile('UBPSAnswer'),
+        ubpsBeliefSetCode: await compile('UBPSBeliefSet'),
         jettonWalletCode: await compile('JettonWallet'),
         jettonMinterCode: await compile('JettonMinter'),
         subcontractCode: await compile('Subcontract'),
@@ -107,6 +119,15 @@ export function buildFullContractCodes(c: CompiledContracts): ContractCodes {
                 soullessSlotMachine: getContractCodeData(c.ssmCode),
                 // SSM embeds this code in its storage to deploy ephemeral slots.
                 ssmSlot: getContractCodeData(c.ssmSlotCode),
+            },
+            // UBPS module codes (master + 4 child types). Children deploy on demand;
+            // the master embeds the child codes in its storage for address calc.
+            ubps: {
+                ubps: getContractCodeData(c.ubpsCode),
+                unit: getContractCodeData(c.ubpsUnitCode),
+                question: getContractCodeData(c.ubpsQuestionCode),
+                answer: getContractCodeData(c.ubpsAnswerCode),
+                beliefSet: getContractCodeData(c.ubpsBeliefSetCode),
             },
         },
         sbtCollection: getContractCodeData(c.sbtCollectionCode),
@@ -178,6 +199,11 @@ export function calculateNetworkAddresses(
     shipStationId: bigint,
     ownerPublicKey: bigint,
     jettonContentUri: string,
+    ubpsCode: Cell,
+    ubpsUnitCode: Cell,
+    ubpsQuestionCode: Cell,
+    ubpsAnswerCode: Cell,
+    ubpsBeliefSetCode: Cell,
 ): NetworkDeploymentData {
     const gameManager = GameManager.createFromConfig({ ownerAddress }, gameManagerCode);
 
@@ -230,6 +256,20 @@ export function calculateNetworkAddresses(
         ownerAddress, gameManager.address, nftPrinterCode, sbtPrinterCode, nftItemCode, sbtnItemCode,
     );
 
+    // UBPS master (independent module). Owner = the deployer wallet (admin only;
+    // the master never reward-authorizes). The master embeds the child codes so its
+    // address depends on them.
+    const ubps = UBPS.createFromConfig(
+        {
+            ownerAddress,
+            unitCode: ubpsUnitCode,
+            questionCode: ubpsQuestionCode,
+            answerCode: ubpsAnswerCode,
+            beliefSetCode: ubpsBeliefSetCode,
+        },
+        ubpsCode,
+    );
+
     return {
         deployed: false,
         ownerAddress: formatAddress(ownerAddress, isTestnet),
@@ -247,6 +287,9 @@ export function calculateNetworkAddresses(
             },
             soulless_slot_machine: {
                 ssm: formatAddress(ssm.address, isTestnet),
+            },
+            ubps: {
+                ubps: formatAddress(ubps.address, isTestnet),
             },
         },
     };
@@ -271,6 +314,7 @@ export async function buildOfflineDeploymentData(
         compiled.jettonMinterCode, compiled.jettonWalletCode, compiled.subcontractCode,
         compiled.nftPrinterCode, compiled.sbtPrinterCode, compiled.nftPrinterItemCode, compiled.sbtPrinterItemCode,
         true, shipStationId, ownerPublicKey, jettonContentUri,
+        compiled.ubpsCode, compiled.ubpsUnitCode, compiled.ubpsQuestionCode, compiled.ubpsAnswerCode, compiled.ubpsBeliefSetCode,
     );
     const mainnet = calculateNetworkAddresses(
         ownerAddress, compiled.gameManagerCode, compiled.retranslatorCode, compiled.gameCode,
@@ -278,6 +322,7 @@ export async function buildOfflineDeploymentData(
         compiled.jettonMinterCode, compiled.jettonWalletCode, compiled.subcontractCode,
         compiled.nftPrinterCode, compiled.sbtPrinterCode, compiled.nftPrinterItemCode, compiled.sbtPrinterItemCode,
         false, shipStationId, ownerPublicKey, jettonContentUri,
+        compiled.ubpsCode, compiled.ubpsUnitCode, compiled.ubpsQuestionCode, compiled.ubpsAnswerCode, compiled.ubpsBeliefSetCode,
     );
     return {
         timestamp: new Date().toISOString(),

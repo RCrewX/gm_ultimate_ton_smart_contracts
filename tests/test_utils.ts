@@ -152,19 +152,18 @@ export async function initContractSystem(): Promise<ContractSystem> {
         success: true,
     });
 
-    // 2) gamesInfo: active_game + the all_games list.
-    const allGamesCell = beginCell()
-        .storeUint(1, 2) // mode 1
-        .storeAddress(game.address) // active_game
-        .storeUint(0, 2) // mode 0 (end)
-        .endCell();
+    // 2) gamesInfo: named slots. This base harness only wires ton_race_game (the
+    //    active reward game); ssm/ubps are unset (null). Specs that need SSM as a
+    //    reward game or UBPS registration set their own gamesInfo.
     messageResult = await gameManager.sendRedirectMessage(
         ownerAccount.getSender(),
         toNano('1'),
         retranslator.address,
         Retranslator.setGamesInfoMessage({
             active_game: game.address,
-            all_games: allGamesCell,
+            ssm: null,
+            ton_race_game: game.address,
+            ubps: null,
         }),
         toNano('0.9'),
     );

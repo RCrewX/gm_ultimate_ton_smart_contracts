@@ -38,13 +38,24 @@ describe('GameManager Switch Games (via Retranslator)', () => {
     let jettonMinterCode: Cell;
     let jettonWalletCode: Cell;
 
-    // Relay a SetGamesInfo to R* through GM (owner-gated redirect).
-    async function setGamesInfo(active_game: Address, all_games: Cell) {
+    // Relay a SetGamesInfo to R* through GM (owner-gated redirect). Named slots:
+    // active_game MUST equal the ssm or ton_race_game slot; ubps is registration-only.
+    async function setGamesInfo(info: {
+        active_game: Address;
+        ssm?: Address | null;
+        ton_race_game?: Address | null;
+        ubps?: Address | null;
+    }) {
         return gameManager.sendRedirectMessage(
             ownerAccount.getSender(),
             toNano('1'),
             retranslator.address,
-            Retranslator.setGamesInfoMessage({ active_game, all_games }),
+            Retranslator.setGamesInfoMessage({
+                active_game: info.active_game,
+                ssm: info.ssm ?? null,
+                ton_race_game: info.ton_race_game ?? null,
+                ubps: info.ubps ?? null,
+            }),
             toNano('0.9'),
         );
     }
@@ -128,12 +139,10 @@ describe('GameManager Switch Games (via Retranslator)', () => {
     }, 100000);
 
     it('should set TON Race Game as active game and verify minting works', async () => {
-        const allGamesCell = beginCell()
-            .storeUint(1, 2).storeAddress(tonRaceGame.address)
-            .storeUint(0, 2)
-            .endCell();
-
-        let messageResult = await setGamesInfo(tonRaceGame.address, allGamesCell);
+        let messageResult = await setGamesInfo({
+            active_game: tonRaceGame.address,
+            ton_race_game: tonRaceGame.address,
+        });
         expect(messageResult.transactions).toHaveTransaction({
             from: gameManager.address, to: retranslator.address, success: true,
         });
@@ -141,6 +150,7 @@ describe('GameManager Switch Games (via Retranslator)', () => {
         const gamesInfo = await retranslator.getGamesInfo();
         expect(gamesInfo).not.toBeNull();
         expect(gamesInfo?.active_game).toEqualAddress(tonRaceGame.address);
+        expect(gamesInfo?.ton_race_game).toEqualAddress(tonRaceGame.address);
 
         // EXIT move should succeed (self-contained on the ship/game side).
         messageResult = await ownerShip.sendMove(ownerAccount.getSender(), GAS_COST_SEND_MOVE, MoveMode.EXIT);
@@ -148,56 +158,51 @@ describe('GameManager Switch Games (via Retranslator)', () => {
     });
 
     it('should switch from TON Race Game to SSM as active game', async () => {
-        let allGamesCell = beginCell()
-            .storeUint(1, 2).storeAddress(tonRaceGame.address)
-            .storeUint(1, 2).storeAddress(ssm.address)
-            .storeUint(0, 2)
-            .endCell();
-        await setGamesInfo(tonRaceGame.address, allGamesCell);
+        await setGamesInfo({ active_game: tonRaceGame.address, ssm: ssm.address, ton_race_game: tonRaceGame.address });
         expect((await retranslator.getGamesInfo())?.active_game).toEqualAddress(tonRaceGame.address);
 
-        allGamesCell = beginCell()
-            .storeUint(1, 2).storeAddress(ssm.address)
-            .storeUint(1, 2).storeAddress(tonRaceGame.address)
-            .storeUint(0, 2)
-            .endCell();
-        await setGamesInfo(ssm.address, allGamesCell);
-        expect((await retranslator.getGamesInfo())?.active_game).toEqualAddress(ssm.address);
+        await setGamesInfo({ active_game: ssm.address, ssm: ssm.address, ton_race_game: tonRaceGame.address });
+        const after = await retranslator.getGamesInfo();
+        expect(after?.active_game).toEqualAddress(ssm.address);
+        expect(after?.ssm).toEqualAddress(ssm.address);
     });
 
     it('should switch from SSM to TON Race Game as active game', async () => {
-        let allGamesCell = beginCell()
-            .storeUint(1, 2).storeAddress(ssm.address)
-            .storeUint(1, 2).storeAddress(tonRaceGame.address)
-            .storeUint(0, 2)
-            .endCell();
-        await setGamesInfo(ssm.address, allGamesCell);
+        await setGamesInfo({ active_game: ssm.address, ssm: ssm.address, ton_race_game: tonRaceGame.address });
         expect((await retranslator.getGamesInfo())?.active_game).toEqualAddress(ssm.address);
 
-        allGamesCell = beginCell()
-            .storeUint(1, 2).storeAddress(tonRaceGame.address)
-            .storeUint(1, 2).storeAddress(ssm.address)
-            .storeUint(0, 2)
-            .endCell();
-        await setGamesInfo(tonRaceGame.address, allGamesCell);
+        await setGamesInfo({ active_game: tonRaceGame.address, ssm: ssm.address, ton_race_game: tonRaceGame.address });
         expect((await retranslator.getGamesInfo())?.active_game).toEqualAddress(tonRaceGame.address);
     });
 
-    // NOTE: the two former sub-tests here drove R*'s game-mint gate via SSM's
+    it('R* registers the ubps slot without it being a reward game', async () => {
+        // ubps is stored for discovery; active_game must still be a reward slot.
+        await setGamesInfo({
+            active_game: tonRaceGame.address,
+            ssm: ssm.address,
+            ton_race_game: tonRaceGame.address,
+            ubps: userAccount.address, // stand-in UBPS master address
+        });
+        const info = await retranslator.getGamesInfo();
+        expect(info?.ubps).toEqualAddress(userAccount.address);
+        expect(info?.active_game).toEqualAddress(tonRaceGame.address);
+    });
+
+    // NOTE: the former sub-tests here drove R*'s game-mint gate via SSM's
     // (now-removed) TryLuck win. That gate is covered by tests/printers/printers-e2e
     // ("mint by a registered active game is allowed" / "mint by a non-allowed
     // initiator is rejected") and by tests/soulless_slot_machine/ssm-roll-native
     // (native win -> R1 -> mint through the real pipe). This file keeps the
     // game-SWITCHING coverage only.
 
-    it('R* validates that first game in all_games matches active_game', async () => {
-        const invalidGamesCell = beginCell()
-            .storeUint(1, 2).storeAddress(tonRaceGame.address) // wrong first game
-            .storeUint(1, 2).storeAddress(ssm.address)
-            .storeUint(0, 2)
-            .endCell();
-
-        const messageResult = await setGamesInfo(ssm.address, invalidGamesCell);
+    it('R* rejects an active_game that is not a reward slot (929)', async () => {
+        // active_game (ssm) matches neither the ton_race_game slot (trg) nor the
+        // ssm slot (null) -> the named-slot validation throws ERR_INVALID_GAMES_INFO.
+        const messageResult = await setGamesInfo({
+            active_game: ssm.address,
+            ssm: null,
+            ton_race_game: tonRaceGame.address,
+        });
         // GM forwards the redirect; R* rejects the invalid registry.
         expect(messageResult.transactions).toHaveTransaction({
             from: gameManager.address,

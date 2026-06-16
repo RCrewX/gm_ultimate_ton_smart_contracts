@@ -57,16 +57,17 @@ describe("Gas Prices - GameManager", () => {
         let initial_balance = await SC_System.ownerAccount.getBalance();
         let gas_sent = toNano('1');
 
-        const allGamesCell = beginCell()
-            .storeUint(1, 2).storeAddress(SC_System.game.address)
-            .storeUint(0, 2)
-            .endCell();
-
         SC_System.messageResult = await SC_System.gameManager.sendRedirectMessage(
             SC_System.ownerAccount.getSender(),
             gas_sent,
             SC_System.retranslator.address,
-            Retranslator.setGamesInfoMessage({ active_game: SC_System.game.address, all_games: allGamesCell }),
+            // Named slots: ton_race_game is the active reward game (ssm/ubps unset).
+            Retranslator.setGamesInfoMessage({
+                active_game: SC_System.game.address,
+                ssm: null,
+                ton_race_game: SC_System.game.address,
+                ubps: null,
+            }),
             toNano('0.9'),
         );
 

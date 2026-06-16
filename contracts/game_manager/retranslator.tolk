@@ -30,8 +30,6 @@ const VERSION: uint64 = 1;
 // of the carry-all balance; callers must attach enough to R1 (>= ~0.3 TON).
 const PRINTER_ITEM_DEPLOY_AMOUNT: coins = ton("0.05"); // item storage + init gas
 const PRINTER_REVOKE_FORWARD_AMOUNT: coins = ton("0.02"); // collection->item Revoke
-// Full games-list walk for a printer mint is only attempted with enough gas.
-const PRINTER_FULL_GAME_WALK_GAS: coins = ton("0.2");
 
 // =============================================================================
 //  ⚒  ANVIL RECIPE ENGINE — constants
@@ -133,18 +131,23 @@ struct JettonInfo {
     jettonWalletCode: cell       // jetton wallet code for address calculation
 }
 
+// Non-reward / overflow slots live behind a ref so the root cell stays under the
+// 1023-bit limit (four full addresses = 1068 bits would overflow). Reward
+// authorization reads ONLY the root cell, so this ref is never loaded on the hot
+// path. Future registration-only slots are added here without growing the root.
+struct GamesInfoExtra {
+    ubps: address?;   // registration-only; NEVER reward-authorized
+}
+
 struct GamesInfo {
-    active_game: address;
-    all_games: cell;
-    // all_games: abstract list of all games, parsed during checkGame().
-    // rules: first comes mode (0,1,2,3) (first expected mode is always 1 for each line)
-    //   mode 1 - next comes address
-    //   mode 0 - end of parse
-    //   mode 2 - first reference parse for next line
-    //   (nothing for mode 3 currently, but we use 2 bits)
-    // examples: [1][:address][1][:address][0] (list of 2)
-    //           [1][:address][1][:address][1][:address][2] (go to ref, expect next mode '1') [1][:address][1][:address][0]
-    // First game in all_games is the current active_game.
+    // Named-slot games registry (replaced the anonymous mode-tagged `all_games`
+    // list). Reward authorization is O(1): an initiator is allowed iff it equals
+    // one of the REWARD-game slots (ssm / ton_race_game). `ubps` (in `extra`) is
+    // stored for discovery only and is NEVER reward-authorized.
+    active_game: address;          // active REWARD game; MUST equal ssm OR ton_race_game
+    ssm: address?;                 // reward-game slot (nullable for forward-safety)
+    ton_race_game: address?;       // reward-game slot
+    extra: Cell<GamesInfoExtra>;   // ubps (registration-only) + future non-reward slots
 }
 
 // ToolsInfo v1 — `extra` gives forward-extensibility (add fields inside `extra`
@@ -652,29 +655,13 @@ fun onInternalMessage(in: InMessage) {
             assert (in.valueCoins >= GAS_COST_SET_GAMES_INFO) throw ERR_MESSAGE_VALUE_TOO_LOW;
 
             val gamesInfo = msg.gamesInfo.load();
-            // Validate that the first game in all_games is the active_game.
-            var allGamesSlice = gamesInfo.all_games.beginParse();
-            var firstMode: uint8 = 0;
-            var hasFirstMode = false;
-            try {
-                firstMode = allGamesSlice.loadUint(2);
-                hasFirstMode = true;
-            } catch {
-                hasFirstMode = false;
-            }
-            if (hasFirstMode && firstMode == 1) { // Mode 1 means an address follows
-                var firstGameAddress: address = gamesInfo.active_game; // Initialize with active_game
-                var hasAddress = false;
-                try {
-                    firstGameAddress = allGamesSlice.loadAddress();
-                    hasAddress = true;
-                } catch {
-                    hasAddress = false;
-                }
-                if (hasAddress) {
-                    assert (firstGameAddress == gamesInfo.active_game) throw ERR_INVALID_GAMES_INFO;
-                }
-            }
+            // Named-slot validation: active_game MUST equal one of the reward-game
+            // slots (ssm or ton_race_game). ubps is registration-only and can never
+            // be the active reward game.
+            assert (
+                (gamesInfo.ssm != null && gamesInfo.active_game == gamesInfo.ssm!) ||
+                (gamesInfo.ton_race_game != null && gamesInfo.active_game == gamesInfo.ton_race_game!)
+            ) throw ERR_INVALID_GAMES_INFO;
 
             storage.gamesInfo = msg.gamesInfo;
             storage.save();
@@ -731,13 +718,10 @@ fun onInternalMessage(in: InMessage) {
                     assert (storage.gamesInfo != null) throw ERR_GAMES_NOT_SET;
                     val gamesInfo = storage.gamesInfo!.load();
 
-                    // First check the active game (cheap); only walk the full list
-                    // when enough gas was attached (it is more expensive).
+                    // active_game fast-path, then the O(1) named-slot reward check.
                     val isActiveGame = (msg.initiator == gamesInfo.active_game);
                     if (!isActiveGame) {
-                        assert (in.valueCoins >= ton("0.2")) throw ERR_INVALID_GAME_SENDER;
-                        val gameIndex = checkGame(msg.initiator, gamesInfo.all_games);
-                        assert (gameIndex != 0) throw ERR_GAME_NOT_FOUND;
+                        assert (isRewardGame(gamesInfo, msg.initiator)) throw ERR_GAME_NOT_FOUND;
                     }
 
                     // forwardPayload empty: the TransferNotification goes from the
@@ -898,7 +882,7 @@ fun onInternalMessage(in: InMessage) {
                 SsmBurnStake => {
                     assert (storage.jettonInfo != null) throw ERR_JETTON_MINTER_NOT_SET;
                     val jettonInfo = storage.jettonInfo!.load();
-                    assertMintInitiatorAllowed(storage, msg.initiator, in.valueCoins);
+                    assertMintInitiatorAllowed(storage, msg.initiator);
                     val gameManagerWalletAddress = calcAddressOfJettonWallet(
                         storage.gameManagerAddress, jettonInfo.jettonMinterAddress, jettonInfo.jettonWalletCode);
                     val askToBurn = AskToBurn {
@@ -920,7 +904,7 @@ fun onInternalMessage(in: InMessage) {
                     assert (storage.toolsInfo != null) throw ERR_TOOLS_INFO_NOT_SET;
                     val toolsInfo = storage.toolsInfo!.load();
                     assert (toolsInfo.nftPrinterAddress != null) throw ERR_NFT_PRINTER_NOT_SET;
-                    assertMintInitiatorAllowed(storage, msg.initiator, in.valueCoins);
+                    assertMintInitiatorAllowed(storage, msg.initiator);
 
                     val index = storage.nextNftIndex;
                     val initParams = PrinterNftItemInit {
@@ -1254,86 +1238,19 @@ fun calcAddressOfJettonWallet(ownerAddress: address, minterAddress: address, jet
     return jwDeployed.calculateAddress()
 }
 
-fun checkGame(gameAddress: address, all_games: cell): uint16 {
-    // Parse through all_games as described in GamesInfo rules and return index.
-    // Skip the first game (this runs only if gameAddress != active_game, and the
-    // first game in all_games is the active_game). Return 0 if not found,
-    // otherwise a 1-based index.
-    var slice = all_games.beginParse();
-    var index: uint16 = 0;
-
-    // Skip first game (active_game) - try to load mode and address
-    var firstMode: uint8 = 0;
-    var hasFirst = false;
-    try {
-        firstMode = slice.loadUint(2);
-        if (firstMode == 1) {
-            val _firstAddress = slice.loadAddress(); // Skip first address
-            index = 1;
-            hasFirst = true;
-        }
-    } catch {
-        return 0; // Empty or invalid list
-    }
-
-    if (!hasFirst) {
-        return 0;
-    }
-
-    var found = false;
-    var maxChecks = 10;
-    var checks = 0;
-
-    while (!found && checks < maxChecks) {
-        checks = checks + 1;
-        var mode: uint8 = 0;
-        try {
-            mode = slice.loadUint(2);
-        } catch {
-            // Try to go to next ref if available
-            if (slice.remainingRefsCount() >= 1) {
-                slice = slice.loadRef().beginParse();
-                try {
-                    mode = slice.loadUint(2);
-                } catch {
-                    return 0; // Not found
-                }
-            } else {
-                return 0; // Not found
-            }
-        }
-
-        if (mode == 0) {
-            return 0; // End of list
-        } else if (mode == 1) {
-            var addr: address = gameAddress; // Initialize
-            try {
-                addr = slice.loadAddress();
-            } catch {
-                return 0; // Not found
-            }
-            index = index + 1;
-            if (addr == gameAddress) {
-                return index; // Found
-            }
-        } else if (mode == 2) {
-            if (slice.remainingRefsCount() >= 1) {
-                slice = slice.loadRef().beginParse();
-            } else {
-                return 0; // Not found
-            }
-        } else {
-            return 0; // Invalid mode
-        }
-    }
-
-    return 0; // Not found
+// Named-slot reward authorization: an address is reward-authorized iff it equals
+// one of the REWARD-game slots. `ubps` is DELIBERATELY excluded — it is a
+// registration-only slot and never authorizes a RUDA mint/burn or printer recipe.
+// O(1) lookup (no list walk), so the prior gas precondition is gone.
+fun isRewardGame(gamesInfo: GamesInfo, addr: address): bool {
+    return (gamesInfo.ssm != null && addr == gamesInfo.ssm!)
+        || (gamesInfo.ton_race_game != null && addr == gamesInfo.ton_race_game!);
 }
 
-// Recipe policy v1 for printer MINTS: initiator must be a registered game OR the
-// owner. Cheap active-game check first; full all_games walk only with enough gas.
+// Recipe policy v1 for printer MINTS: initiator must be a registered reward game
+// OR the owner. Cheap active-game fast-path first, then the O(1) named-slot check.
 // THIS is the documented extension point for the future recipe registry.
-fun assertMintInitiatorAllowed(storage: RetranslatorStorage, initiator: address, valueCoins: coins) {
+fun assertMintInitiatorAllowed(storage: RetranslatorStorage, initiator: address) {
     if (initiator == storage.ownerAddress) {
         return;
     }
@@ -1342,8 +1259,7 @@ fun assertMintInitiatorAllowed(storage: RetranslatorStorage, initiator: address,
     if (initiator == gamesInfo.active_game) {
         return;
     }
-    assert (valueCoins >= PRINTER_FULL_GAME_WALK_GAS) throw ERR_INVALID_GAME_SENDER;
-    assert (checkGame(initiator, gamesInfo.all_games) != 0) throw ERR_GAME_NOT_FOUND;
+    assert (isRewardGame(gamesInfo, initiator)) throw ERR_GAME_NOT_FOUND;
 }
 
 // =============================================================================

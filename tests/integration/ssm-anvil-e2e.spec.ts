@@ -49,17 +49,17 @@ async function setupE2E(): Promise<E2ESystem> {
     await ssm.sendDeploy(base.ownerAccount.getSender(), toNano('0.5'));
 
     // Register SSM as the active game so its MintNft / ForwardMintRequest rewards
-    // pass R*'s cheap active-game gate, and native rolls route JettonUsed to it.
-    const allGames = beginCell()
-        .storeUint(1, 2).storeAddress(ssm.address)
-        .storeUint(1, 2).storeAddress(base.game.address)
-        .storeUint(0, 2)
-        .endCell();
+    // pass R*'s active-game gate, and native rolls route JettonUsed to it.
     await base.gameManager.sendRedirectMessage(
         base.ownerAccount.getSender(),
         toNano('1'),
         base.retranslator.address,
-        Retranslator.setGamesInfoMessage({ active_game: ssm.address, all_games: allGames }),
+        Retranslator.setGamesInfoMessage({
+            active_game: ssm.address,
+            ssm: ssm.address,
+            ton_race_game: base.game.address,
+            ubps: null,
+        }),
         toNano('0.9'),
     );
 
@@ -201,6 +201,6 @@ describe('SSM + ANVIL cross-system e2e', () => {
         expect(Number(c.opcodes.anvil.OP_PRINTER_ANVIL_APPLY)).toBe(ANVIL_OPCODES.OP_PRINTER_ANVIL_APPLY);
         // Enums published for the consumer.
         expect(c.enums.AnvilRecipe.COMBINE).toBe(AnvilRecipe.COMBINE);
-        expect(c.schemaVersion).toBe(3); // bumped by the multisplav/burn/caps gap plans
+        expect(c.schemaVersion).toBe(6); // v6 = UBPS module + R* named-slots games registry
     });
 });

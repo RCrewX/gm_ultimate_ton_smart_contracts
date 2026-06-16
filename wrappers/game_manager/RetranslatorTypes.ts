@@ -47,9 +47,14 @@ export type JettonInfo = {
     jettonWalletCode: Cell;
 };
 
+// Named-slot games registry (mirrors retranslator.tolk GamesInfo). active_game
+// MUST equal the ssm or ton_race_game slot; ubps is registration-only. The three
+// slots are nullable (addr_none) for forward-safety.
 export type GamesInfo = {
     active_game: Address;
-    all_games: Cell;
+    ssm: Address | null;
+    ton_race_game: Address | null;
+    ubps: Address | null;
 };
 
 export type ToolsInfo = {
@@ -143,7 +148,16 @@ export function encodeJettonInfo(info: JettonInfo): Cell {
 }
 
 export function encodeGamesInfo(info: GamesInfo): Cell {
-    return beginCell().storeAddress(info.active_game).storeRef(info.all_games).endCell();
+    // storeAddress(null) writes the addr_none tag, matching Tolk `address?`.
+    // ubps lives in a child cell (GamesInfoExtra) so the root stays < 1023 bits;
+    // four full addresses inline would overflow.
+    const extra = beginCell().storeAddress(info.ubps).endCell();
+    return beginCell()
+        .storeAddress(info.active_game)
+        .storeAddress(info.ssm)
+        .storeAddress(info.ton_race_game)
+        .storeRef(extra)
+        .endCell();
 }
 
 export function encodeToolsInfo(info: ToolsInfo): Cell {

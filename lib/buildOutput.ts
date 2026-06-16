@@ -45,6 +45,11 @@ export interface SoullessSlotMachineAddresses {
     ssm: AddressInfo;
 }
 
+/** UBPS — only the master is deployed at bootstrap; children deploy on demand. */
+export interface UbpsAddresses {
+    ubps: AddressInfo;
+}
+
 /**
  * Contract codes for all games (stored once at root level)
  */
@@ -58,6 +63,15 @@ export interface SoullessSlotMachineCodes {
     soullessSlotMachine: ContractCodeInfo;
     /** SSMSlot — the ephemeral per-reel contract SSM deploys each roll. */
     ssmSlot?: ContractCodeInfo;
+}
+
+/** UBPS module codes: master + the four child contract types. */
+export interface UbpsCodes {
+    ubps: ContractCodeInfo;
+    unit: ContractCodeInfo;
+    question: ContractCodeInfo;
+    answer: ContractCodeInfo;
+    beliefSet: ContractCodeInfo;
 }
 
 /**
@@ -78,6 +92,8 @@ export interface NetworkDeploymentData {
     games?: {
         ton_race_game?: TonRaceGameAddresses;
         soulless_slot_machine?: SoullessSlotMachineAddresses;
+        /** Independent module — registration-only R* slot (never reward-authorized). */
+        ubps?: UbpsAddresses;
     };
     status?: 'in_progress' | 'completed' | 'failed';
     error?: string;
@@ -95,6 +111,7 @@ export interface ContractCodes {
     games: {
         ton_race_game: TonRaceGameCodes;
         soulless_slot_machine: SoullessSlotMachineCodes;
+        ubps?: UbpsCodes;
     };
     /** Optional: NFT collection/item code hashes (TEP-62) */
     nftCollection?: ContractCodeInfo;
@@ -334,6 +351,9 @@ export function mergeContractCodes(
                 ...existing.games?.soulless_slot_machine,
                 ...incoming.games?.soulless_slot_machine,
             } as SoullessSlotMachineCodes,
+            ubps: (existing.games?.ubps || incoming.games?.ubps)
+                ? ({ ...existing.games?.ubps, ...incoming.games?.ubps } as UbpsCodes)
+                : undefined,
         },
     };
 }

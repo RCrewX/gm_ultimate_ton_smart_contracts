@@ -29,6 +29,7 @@ import { Retranslator } from '../wrappers/game_manager/Retranslator';
 import { Game } from '../wrappers/ton_race_game/Game';
 import { Ship } from '../wrappers/ton_race_game/Ship';
 import { SoullessSlotMachine } from '../wrappers/soulless_slot_machine/SoullessSlotMachine';
+import { UBPS } from '../wrappers/ubps/UBPS';
 import { JettonMinter, jettonContentToCell } from '../wrappers/tep/jetton/JettonMinter';
 import { JettonWallet } from '../wrappers/tep/jetton/JettonWallet';
 import { Subcontract } from '../wrappers/subcontract/Subcontract';
@@ -631,6 +632,7 @@ async function main(): Promise<void> {
             ssmCode, ssmSlotCode, jettonWalletCode, jettonMinterCode, subcontractCode,
             sbtItemCode, sbtCollectionCode, sbtnItemCode, sbtnCollectionCode, nftItemCode,
             nftPrinterItemCode, sbtPrinterItemCode, nftPrinterCode, sbtPrinterCode,
+            ubpsCode, ubpsUnitCode, ubpsQuestionCode, ubpsAnswerCode, ubpsBeliefSetCode,
         } = compiled;
         console.log('Contracts compiled successfully');
         console.log('');
@@ -648,13 +650,15 @@ async function main(): Promise<void> {
             ownerAddress, gameManagerCode, retranslatorCode, gameCode, shipCode, coordinateCellCode,
             ssmCode, ssmSlotCode, jettonMinterCode, jettonWalletCode, subcontractCode,
             nftPrinterCode, sbtPrinterCode, nftPrinterItemCode, sbtPrinterItemCode,
-            true, shipStationId, ownerPublicKey, jettonContentUri
+            true, shipStationId, ownerPublicKey, jettonContentUri,
+            ubpsCode, ubpsUnitCode, ubpsQuestionCode, ubpsAnswerCode, ubpsBeliefSetCode
         );
         const mainnetAddresses = calculateNetworkAddresses(
             ownerAddress, gameManagerCode, retranslatorCode, gameCode, shipCode, coordinateCellCode,
             ssmCode, ssmSlotCode, jettonMinterCode, jettonWalletCode, subcontractCode,
             nftPrinterCode, sbtPrinterCode, nftPrinterItemCode, sbtPrinterItemCode,
-            false, shipStationId, ownerPublicKey, jettonContentUri
+            false, shipStationId, ownerPublicKey, jettonContentUri,
+            ubpsCode, ubpsUnitCode, ubpsQuestionCode, ubpsAnswerCode, ubpsBeliefSetCode
         );
 
         // Initialize deployment data
@@ -705,6 +709,15 @@ async function main(): Promise<void> {
             },
             ssmCode
         );
+        // UBPS master (independent module — no GM/R* reward pipe). Owner = deployer
+        // wallet (admin only). The master embeds the child codes for address calc.
+        const ubps = UBPS.createFromConfig({
+            ownerAddress,
+            unitCode: ubpsUnitCode,
+            questionCode: ubpsQuestionCode,
+            answerCode: ubpsAnswerCode,
+            beliefSetCode: ubpsBeliefSetCode,
+        }, ubpsCode);
         const ownerJettonWallet = JettonWallet.createFromConfig({
             ownerAddress,
             minterAddress: jettonMinter.address,
@@ -786,6 +799,17 @@ async function main(): Promise<void> {
         console.log('Soulless Slot Machine:', ssm.address.toString());
         writeFullDeploymentData(deploymentData);
 
+        // 3b. Deploy UBPS master (independent module; children deploy on demand).
+        await checkAndDeploy(
+            client, wallet, keyPair,
+            ubps.address, 'UBPS',
+            toNano('0.5'),
+            { code: ubpsCode, data: ubps.init!.data },
+            withRateLimit
+        );
+        console.log('UBPS:', ubps.address.toString());
+        writeFullDeploymentData(deploymentData);
+
         // 4. Deploy JettonMinter
         await checkAndDeploy(
             client, wallet, keyPair,
@@ -861,23 +885,20 @@ async function main(): Promise<void> {
         const gamesInfo = await withRateLimit(() => openedRetranslator.getGamesInfo()).catch(() => null);
 
         if (!gamesInfo?.active_game?.equals(game.address)) {
-            let allGamesBuilder = beginCell();
-            for (const gameAddr of [game.address, ssm.address]) {
-                allGamesBuilder = allGamesBuilder
-                    .storeUint(1, 2)
-                    .storeAddress(gameAddr);
-            }
-            allGamesBuilder = allGamesBuilder.storeUint(0, 2);
-
             await sendAndWait(
                 client, wallet, keyPair,
                 gameManager.address,
                 toNano('1'),
                 GameManager.redirectMessage(
                     retranslator.address,
+                    // Named slots: ton_race_game stays the default active reward game;
+                    // ssm is the other reward slot; ubps is registration-only (never
+                    // reward-authorized).
                     Retranslator.setGamesInfoMessage({
                         active_game: game.address,
-                        all_games: allGamesBuilder.endCell(),
+                        ssm: ssm.address,
+                        ton_race_game: game.address,
+                        ubps: ubps.address,
                     }),
                     toNano('0.9'),
                 ),
@@ -932,6 +953,11 @@ async function main(): Promise<void> {
             console.log('✓ Active game address verified on R*');
         } else {
             console.warn('⚠ Active game not yet set on R* (may still be processing)');
+        }
+        if (verifyGamesInfo?.ubps?.equals(ubps.address)) {
+            console.log('✓ UBPS registration slot verified on R* (registration-only)');
+        } else {
+            console.warn('⚠ UBPS slot not yet set on R* (may still be processing)');
         }
 
         const verifyTools = decodeToolsPrinters(
@@ -1024,6 +1050,7 @@ async function main(): Promise<void> {
         console.log('SBTPrinter:', sbtPrinter.address.toString());
         console.log('TON Race Game:', game.address.toString());
         console.log('Soulless Slot Machine:', ssm.address.toString());
+        console.log('UBPS:', ubps.address.toString());
         console.log('JettonMinter:', jettonMinter.address.toString());
         console.log('Owner JettonWallet:', ownerJettonWallet.address.toString());
         console.log('Owner Ship:', ownerShip.address.toString());
