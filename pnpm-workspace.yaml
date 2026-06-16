@@ -1,0 +1,4 @@
+ignoredBuiltDependencies:
+  - core-js-pure
+  - protobufjs
+  - unrs-resolver

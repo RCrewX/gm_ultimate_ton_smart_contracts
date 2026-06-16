@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: UNLICENSED
+/**
+ * verifyDeploymentHashes — guard that the checked-in deployment artifact matches the source.
+ *
+ * Asserts that EVERY `contractCodes.*.hash` recorded in
+ * `deployment_info/deployment_latest.json` equals the hash of the freshly compiled
+ * contract (via the canonical `compileAllContracts` + `buildFullContractCodes` — the same
+ * single source of truth the deploy/ABI producer uses). Both sides use the SAME hash scheme
+ * (`sha256(cell.toBoc())`, via `getContractCodeData`); do NOT compare against the
+ * `build/*.compiled.json` "hash" field — that is the TVM *cell hash* (`cell.hash()`), a
+ * DIFFERENT value, and comparing the two schemes always falsely mismatches.
+ *
+ * SCOPE / LIMITATION (read this): this compares the ARTIFACT to the SOURCE. It does NOT, and
+ * cannot without RPC, compare the code actually live ON-CHAIN. So it catches "someone edited a
+ * contract but forgot to regenerate deployment_latest.json", but it will NOT catch an on-chain
+ * skew where the artifact already reflects new source yet the deployed contracts are stale
+ * (the actual ERR_INVALID_SHIP_SENDER_FOR_MOVE / move-919 class). A true on-chain guard must
+ * fetch the live code via RPC and compare it to source.
+ *
+ * Exits NON-ZERO on any discrepancy so this can be a CI gate / post-regenerate assertion.
+ *
+ * Run:  pnpm verify:hashes   (alias for `ts-node scripts/lib/verifyDeploymentHashes.ts`)
+ *
+ * NOTE on placement: this is intentionally NOT wired as a *blocking pre-step inside*
+ * `deploySystem.ts`. Before a corrective redeploy the artifact is, by definition, stale, so a
+ * blocking pre-deploy check would refuse the very deploy that fixes the skew. The right homes
+ * are: (a) CI on the repo (the checked-in artifact must match source), and/or (b) a post-deploy
+ * assertion after the artifact has been regenerated. Both are satisfied by running this script.
+ */
+import { compileAllContracts, buildFullContractCodes } from './abiCore';
+import { readDeploymentData } from '../../lib/buildOutput';
+
+/** Recursively flatten a contractCodes tree into { dotted.path: hash }. */
+function flattenHashes(obj: any, prefix = ''): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const key of Object.keys(obj ?? {})) {
+        const value = obj[key];
+        if (value && typeof value === 'object') {
+            if (typeof value.hash === 'string') {
+                out[prefix + key] = value.hash;
+            } else {
+                Object.assign(out, flattenHashes(value, prefix + key + '.'));
+            }
+        }
+    }
+    return out;
+}
+
+export interface HashVerificationResult {
+    ok: boolean;
+    mismatches: string[]; // "path: artifact <hashA> != source <hashB>"
+    missing: string[];    // present in freshly compiled source, absent from the artifact
+    extra: string[];      // present in the artifact, not produced by the source
+}
+
+/**
+ * Compile the contracts fresh and compare every code hash to the checked-in
+ * deployment_latest.json. Pure check — reads source + the artifact, mutates nothing.
+ */
+export async function verifyDeploymentHashes(): Promise<HashVerificationResult> {
+    const compiled = await compileAllContracts();
+    const expected = flattenHashes(buildFullContractCodes(compiled));
+
+    const data = readDeploymentData();
+    const actual = flattenHashes(data.contractCodes ?? {});
+
+    const mismatches: string[] = [];
+    const missing: string[] = [];
+    for (const [key, expHash] of Object.entries(expected)) {
+        const actHash = actual[key];
+        if (actHash === undefined) {
+            missing.push(key);
+        } else if (actHash !== expHash) {
+            mismatches.push(`${key}: artifact ${actHash.slice(0, 16)}… != source ${expHash.slice(0, 16)}…`);
+        }
+    }
+    const extra = Object.keys(actual).filter((k) => !(k in expected));
+
+    const ok = mismatches.length === 0 && missing.length === 0 && extra.length === 0;
+    return { ok, mismatches, missing, extra };
+}
+
+async function main(): Promise<void> {
+    const { ok, mismatches, missing, extra } = await verifyDeploymentHashes();
+    if (ok) {
+        console.log('✅ deployment_latest.json contractCodes match freshly compiled source — no skew.');
+        process.exit(0);
+    }
+    console.error('❌ Deployment hash skew detected — deployed/recorded code != current source:');
+    for (const m of mismatches) console.error(`   MISMATCH  ${m}`);
+    for (const k of missing) console.error(`   MISSING   ${k} (in source, absent from artifact)`);
+    for (const k of extra) console.error(`   EXTRA     ${k} (in artifact, not produced by source)`);
+    console.error('\nRedeploy from current source (e.g. pnpm deploy:testnet) so the artifact is regenerated,');
+    console.error('then re-run `pnpm verify:hashes`. Do NOT hand-edit deployment_latest.json.');
+    process.exit(1);
+}
+
+// Run only when invoked directly (so it can also be imported as a CI/post-deploy assertion).
+if (require.main === module) {
+    main().catch((e) => {
+        console.error(e);
+        process.exit(1);
+    });
+}

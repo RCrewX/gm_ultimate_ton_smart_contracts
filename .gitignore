@@ -1,0 +1,37 @@
+node_modules
+temp
+build
+build_info
+deployment_info
+gas_costs
+dist
+.DS_Store
+package.ts
+.env
+*.bak.*
+.privatekey
+
+# VS Code
+.claude/
+.vscode/*
+.history/
+*.vsix
+
+# IDEA files
+.idea
+
+# VIM
+Session.vim
+.vim/
+
+# Other private editor folders
+.nvim/
+.emacs/
+.helix/
+
+prompt*
+
+.cursor*
+# Local SSM scratch note + private encryption note (untracked by request)
+contracts/soulless_slot_machine/new_ssm.md
+note_encrypt_multisplav.txt

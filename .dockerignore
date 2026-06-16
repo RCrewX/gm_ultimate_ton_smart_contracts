@@ -1,0 +1,40 @@
+node_modules
+build
+dist
+temp
+.DS_Store
+package.ts
+.env
+.privatekey
+.git
+.gitignore
+
+# VS Code
+.vscode
+.history
+*.vsix
+
+# IDEA files
+.idea
+
+# VIM
+Session.vim
+.vim
+
+# Other private editor folders
+.nvim
+.emacs
+.helix
+
+prompt*
+.cursor
+
+# Test coverage
+coverage
+.nyc_output
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+

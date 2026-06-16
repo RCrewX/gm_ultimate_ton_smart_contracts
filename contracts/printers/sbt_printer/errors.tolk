@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: UNLICENSED
+// SBTPrinter errors — copied verbatim from tep/sbtn/errors.tolk so the printer
+// collection stays byte-compatible with the reused (gate-fixed) SBTNItem code.
+// Range 960-970 to avoid overlap with SBT 950-959.
+
+const ERROR_NOT_FROM_COLLECTION = 960
+const ERROR_ALREADY_INITIALIZED = 961
+const ERROR_NOT_FROM_OWNER = 962
+const ERROR_NOT_AUTHORITY = 963
+const ERROR_ALREADY_REVOKED = 964
+const ERROR_INVALID_ITEM_INDEX = 965
+const ERROR_BATCH_LIMIT_EXCEEDED = 966
+const ERROR_SBTN_TRANSFER_FORBIDDEN = 967
+const ERROR_NOT_FROM_ADMIN = 968
+const ERROR_NOT_INITIALIZED = 969
+const ERROR_UNKNOWN_MESSAGE = 970
