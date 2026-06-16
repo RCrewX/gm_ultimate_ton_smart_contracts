@@ -49,6 +49,7 @@ export const Errors = {
     ERR_UBPS_INVALID_OWNER_SENDER: 606,
     ERR_UBPS_VALUE_TOO_LOW: 607,
     ERR_UBPS_NOT_MASTER: 608,
+    ERR_UBPS_BAD_STRING_CELL: 609,
 } as const;
 
 // -----------------------------------------------------------------------------

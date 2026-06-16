@@ -75,6 +75,18 @@ describe('UBPS Answer activation', () => {
         });
     });
 
+    it('multi-cell answer payload (refs) is rejected (609)', async () => {
+        const claimedId = stringId('Y');
+        const malicious = beginCell()
+            .storeStringTail('Y')
+            .storeRef(beginCell().storeUint(0xbeef, 16).endCell())
+            .endCell();
+        const res = await S.ubps.sendActivateAnswer(S.user.getSender(), toNano('0.5'), qAddr, claimedId, malicious);
+        expect(res.transactions).toHaveTransaction({
+            to: S.ubps.address, success: false, exitCode: Errors.ERR_UBPS_BAD_STRING_CELL,
+        });
+    });
+
     it('the same answer text under two different Questions yields two distinct, active A contracts', async () => {
         const qA = S.ubps.questionAddress(stringId('Q-A'), codes.questionCode);
         const qB = S.ubps.questionAddress(stringId('Q-B'), codes.questionCode);

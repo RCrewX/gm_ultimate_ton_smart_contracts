@@ -101,6 +101,21 @@ describe('UBPS Question activation', () => {
         expect(new Set(addrs).size).toBe(variants.length);
     });
 
+    it('multi-cell payload (refs) is rejected (609) even if head bits hash to the claimed id', async () => {
+        // Attack without the single-cell guard: head bits == "X" (so bitsHash(head) ==
+        // stringId("X")), with extra bytes smuggled in a ref. The id would "match" the
+        // head, but the stored content would be corrupted -> reject any refs.
+        const claimedId = stringId('X');
+        const malicious = beginCell()
+            .storeStringTail('X')
+            .storeRef(beginCell().storeUint(0xdead, 16).endCell())
+            .endCell();
+        const res = await S.ubps.sendActivateQuestion(S.user.getSender(), toNano('0.5'), claimedId, malicious);
+        expect(res.transactions).toHaveTransaction({
+            to: S.ubps.address, success: false, exitCode: Errors.ERR_UBPS_BAD_STRING_CELL,
+        });
+    });
+
     it('value below UBPS_MIN_OP_VALUE is rejected (607)', async () => {
         const id = stringId(QTEXT);
         const res = await S.ubps.sendActivateQuestion(S.user.getSender(), toNano('0.01'), id, buildStringCell(QTEXT));

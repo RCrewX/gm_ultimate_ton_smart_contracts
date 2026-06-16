@@ -29,7 +29,14 @@ fun onInternalMessage(in: InMessage) {
         // ---- Activate a Question: verify the hash, then deploy+activate the Q ----
         ActivateQuestion => {
             assert (in.valueCoins >= UBPS_MIN_OP_VALUE) throw ERR_UBPS_VALUE_TOO_LOW;
-            val computedId = msg.questionBytes.beginParse().bitsHash();
+            // The id must bind the EXACT content. bitsHash (SHA256U) only covers the
+            // head cell's data bits, so a multi-cell payload could share a head-bits
+            // hash while smuggling different bytes in refs — reject any refs so the id
+            // commits to a single byte-aligned cell (sha256 preimage resistance then
+            // makes the id a true content commitment).
+            val bytesSlice = msg.questionBytes.beginParse();
+            assert (bytesSlice.remainingRefsCount() == 0) throw ERR_UBPS_BAD_STRING_CELL;
+            val computedId = bytesSlice.bitsHash();
             assert (computedId == msg.questionId) throw ERR_UBPS_HASH_MISMATCH;
 
             reserveValue(in.valueCoins);
@@ -46,7 +53,10 @@ fun onInternalMessage(in: InMessage) {
         // ---- Activate an Answer bound to a Question ----
         ActivateAnswer => {
             assert (in.valueCoins >= UBPS_MIN_OP_VALUE) throw ERR_UBPS_VALUE_TOO_LOW;
-            val computedId = msg.answerBytes.beginParse().bitsHash();
+            // Same single-cell binding as ActivateQuestion (see the note there).
+            val bytesSlice = msg.answerBytes.beginParse();
+            assert (bytesSlice.remainingRefsCount() == 0) throw ERR_UBPS_BAD_STRING_CELL;
+            val computedId = bytesSlice.bitsHash();
             assert (computedId == msg.answerId) throw ERR_UBPS_HASH_MISMATCH;
 
             reserveValue(in.valueCoins);

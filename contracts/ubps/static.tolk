@@ -41,6 +41,7 @@ const ERR_UBPS_TOO_MANY_BS = 605;           // bsCount > MAX_BS
 const ERR_UBPS_INVALID_OWNER_SENDER = 606;  // Unit SetPointer not from the unit's user
 const ERR_UBPS_VALUE_TOO_LOW = 607;         // operation underfunded
 const ERR_UBPS_NOT_MASTER = 608;            // child activation/creation not from the master
+const ERR_UBPS_BAD_STRING_CELL = 609;       // Q/A string cell has refs (must be a single byte-aligned cell)
 
 // =============================================================================
 //  Storage
