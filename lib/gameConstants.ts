@@ -90,6 +90,7 @@ import {
     MAX_A as UBPS_MAX_A,
     MAX_BS as UBPS_MAX_BS,
     UBPS_MAX_STRING_BYTES,
+    UBPS_MAX_NAME_BYTES,
     UBPS_MIN_OP_VALUE,
 } from '../wrappers/ubps/types';
 
@@ -166,7 +167,18 @@ import { SBTPrinterOp } from '../wrappers/printers/sbt_printer/SBTPrinter';
 // mode-tagged `all_games` list to NAMED SLOTS {active_game, ssm, ton_race_game,
 // ubps}; the `ubps` slot is registration-only (NEVER reward-authorized). The
 // published contractCodes/addresses now include `games.ubps`.
-export const CONSTANTS_SCHEMA_VERSION = 6;
+// v7: UBPS gains (1) a Unit-creation path THROUGH the master and (2) an optional
+// BeliefSet display name. ADDED opcodes under `opcodes.ubps`: `OP_CREATE_UNIT`
+// (0x55425004, user→master — deploys the caller's Unit at its deterministic address,
+// == the self-deploy address, with an optional initial pointer) and `OP_INIT_UNIT_POINTER`
+// (0x55425014, master→Unit — applies that initial pointer, master-gated + init-only).
+// The BeliefSet now stores an OPTIONAL `name` (Maybe(^Cell)): non-unique, immutable, NOT
+// hashed, NOT an id, NOT address-determining — carried by CreateBeliefSet/PopulateBeliefSet
+// and exposed via `get_name()`. NEW `gameConstants` key UBPS_MAX_NAME_BYTES (256). The BS
+// on-chain layout + the master/BS/Unit code-hashes change → BS/Unit/master ADDRESSES move
+// → a fresh deploy + re-seed are required. The games.ubps published shape (codes+addresses)
+// is otherwise unchanged.
+export const CONSTANTS_SCHEMA_VERSION = 7;
 
 // ============================================================================
 // Serialisation helpers
@@ -399,6 +411,8 @@ export function buildGameConstants(): GameConstants {
             UBPS_MAX_A,
             UBPS_MAX_BS,
             UBPS_MAX_STRING_BYTES,
+            // Display-name storage cap for the optional BeliefSet `name` (not hashed).
+            UBPS_MAX_NAME_BYTES,
         },
 
         enums: {

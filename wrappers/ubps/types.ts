@@ -23,15 +23,22 @@ export const UBPS_MIN_OP_VALUE = toNano('0.1');
 // SHA256U (slice.bitsHash) matches the off-chain sha256 of the UTF-8 bytes.
 export const UBPS_MAX_STRING_BYTES = 127;
 
+// BeliefSet display `name` is NOT hashed (no single-cell limit) — but we cap it to a
+// sane length so it stays cheap to store/forward. A snake string >127 bytes spills
+// into refs automatically (storeStringTail); this bound keeps it to a few cells.
+export const UBPS_MAX_NAME_BYTES = 256;
+
 export const Opcodes = {
     // to master
     OP_ACTIVATE_QUESTION: 0x55425001,
     OP_ACTIVATE_ANSWER: 0x55425002,
     OP_CREATE_BELIEF_SET: 0x55425003,
+    OP_CREATE_UNIT: 0x55425004,
     // master -> child
     OP_ACTIVATE_QUESTION_MSG: 0x55425011,
     OP_ACTIVATE_ANSWER_MSG: 0x55425012,
     OP_POPULATE_BELIEF_SET: 0x55425013,
+    OP_INIT_UNIT_POINTER: 0x55425014,
     // to a Unit
     OP_SET_POINTER: 0x55425021,
     // shared excess / catch-all
@@ -73,6 +80,17 @@ export function stringId(s: string): bigint {
         throw new Error(`UBPS string too long: ${bytes.length} bytes > ${UBPS_MAX_STRING_BYTES}`);
     }
     return BigInt('0x' + createHash('sha256').update(bytes).digest('hex'));
+}
+
+// BeliefSet display name -> a snake string cell (NOT hashed; spills into refs past the
+// first cell). Capped at UBPS_MAX_NAME_BYTES so storage stays cheap. Use for the
+// optional, non-unique, immutable BS `name`.
+export function buildNameCell(s: string): Cell {
+    const bytes = Buffer.from(s, 'utf8');
+    if (bytes.length > UBPS_MAX_NAME_BYTES) {
+        throw new Error(`UBPS BeliefSet name too long: ${bytes.length} bytes > ${UBPS_MAX_NAME_BYTES}`);
+    }
+    return beginCell().storeStringTail(s).endCell();
 }
 
 export const emptyCell = (): Cell => beginCell().endCell();
@@ -152,12 +170,13 @@ export function answerConfigToCell(c: AnswerConfig): Cell {
 export type BeliefSetConfig = {
     ubpsMaster: Address;
     bsIndex: bigint | number;
-    created?: boolean;       // address calc fixes created/root=false, counts=0, empty sets
+    created?: boolean;       // address calc fixes created/root=false, counts=0, empty sets, name=null
     root?: boolean;
     aCount?: number;
     bsCount?: number;
     aSet?: Cell;
     bsSet?: Cell;
+    name?: Cell | null;      // optional display name; null at deploy (not address-determining)
 };
 
 export function beliefSetConfigToCell(c: BeliefSetConfig): Cell {
@@ -170,6 +189,7 @@ export function beliefSetConfigToCell(c: BeliefSetConfig): Cell {
         .storeUint(c.bsCount ?? 0, 16)
         .storeRef(c.aSet ?? emptyCell())
         .storeRef(c.bsSet ?? emptyCell())
+        .storeMaybeRef(c.name ?? null)
         .endCell();
 }
 
@@ -199,6 +219,7 @@ export function encodeCreateBeliefSet(
     bsCount: number,
     aSet: Cell,
     bsSet: Cell,
+    name: Cell | null = null,
 ): Cell {
     return beginCell()
         .storeUint(Opcodes.OP_CREATE_BELIEF_SET, 32)
@@ -207,6 +228,25 @@ export function encodeCreateBeliefSet(
         .storeUint(bsCount, 16)
         .storeRef(aSet)
         .storeRef(bsSet)
+        .storeMaybeRef(name)
+        .endCell();
+}
+
+// Create a Unit THROUGH the master. `up` is the optional initial pointer (null = empty).
+// The Unit is owned by whoever signs the message to the master (userAddress = sender).
+export function encodeCreateUnit(up: Address | null = null): Cell {
+    return beginCell()
+        .storeUint(Opcodes.OP_CREATE_UNIT, 32)
+        .storeAddress(up)
+        .endCell();
+}
+
+// master -> Unit initial pointer (sent by the master after a CreateUnit deploy). Wrapped
+// here for test/parity use; users never send this directly.
+export function encodeInitUnitPointer(up: Address | null): Cell {
+    return beginCell()
+        .storeUint(Opcodes.OP_INIT_UNIT_POINTER, 32)
+        .storeAddress(up)
         .endCell();
 }
 

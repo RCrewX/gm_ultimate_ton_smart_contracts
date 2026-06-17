@@ -11,9 +11,9 @@
  * Caps (MAX_A / MAX_BS / UBPS_MAX_STRING_BYTES) are RE-EXPORTED from the UBPS
  * wrapper types so the seeder and the contracts can never drift.
  */
-import { MAX_A, MAX_BS, UBPS_MAX_STRING_BYTES } from '../../wrappers/ubps/types';
+import { MAX_A, MAX_BS, UBPS_MAX_STRING_BYTES, UBPS_MAX_NAME_BYTES } from '../../wrappers/ubps/types';
 
-export { MAX_A, MAX_BS, UBPS_MAX_STRING_BYTES };
+export { MAX_A, MAX_BS, UBPS_MAX_STRING_BYTES, UBPS_MAX_NAME_BYTES };
 
 export const UBPS_SEED_VERSION = 1 as const;
 
@@ -43,6 +43,9 @@ export interface SeedBeliefSet {
     root: boolean;            // true => final Belief (public profile)
     answers: string[];        // -> existing SeedAnswer.id[]  (<= MAX_A)
     sets: string[];           // -> existing SeedBeliefSet.id[] (<= MAX_BS); ACYCLIC
+    name?: string;            // OPTIONAL display name/description (<= UBPS_MAX_NAME_BYTES utf-8
+                              // bytes). Non-unique, immutable, NOT hashed, NOT an id, NOT
+                              // address-determining. Display only.
 }
 
 export interface SeedPointer {
@@ -54,6 +57,10 @@ export interface SeedUser {
     id: string;
     walletIndex: number;      // 0-based index into the derived test-wallet set
     pointer: SeedPointer;
+    createViaMaster?: boolean; // true (DEFAULT) => create the Unit THROUGH the master
+                              // (CreateUnit funnel: one user-signed op deploys the Unit AND
+                              // sets the initial pointer, and the master tx records it for
+                              // backend discovery). false => self-deploy + a separate SetPointer.
 }
 
 export interface UbpsSeed {
@@ -204,6 +211,15 @@ export function validateSeed(
     for (let i = 0; i < beliefSets.length; i++) {
         const bs = beliefSets[i];
         if (typeof bs?.root !== 'boolean') push(`beliefSets[${i}].root must be a boolean`);
+        // optional display name (not hashed, not an id) — string within the storage cap
+        if (bs?.name !== undefined && bs?.name !== null) {
+            if (typeof bs.name !== 'string') {
+                push(`beliefSets[${i}].name must be a string when present`);
+            } else {
+                const n = Buffer.byteLength(bs.name, 'utf8');
+                if (n > UBPS_MAX_NAME_BYTES) push(`beliefSets[${i}].name is ${n} utf-8 bytes > ${UBPS_MAX_NAME_BYTES} (storage cap)`);
+            }
+        }
         const bsAnswers = Array.isArray(bs?.answers) ? bs.answers : null;
         const bsSets = Array.isArray(bs?.sets) ? bs.sets : null;
         if (!bsAnswers) push(`beliefSets[${i}].answers must be an array`);
@@ -240,6 +256,9 @@ export function validateSeed(
         } else {
             if (seenIdx.has(wi)) push(`users[${i}].walletIndex ${wi} is duplicated`);
             seenIdx.add(wi);
+        }
+        if (u?.createViaMaster !== undefined && typeof u.createViaMaster !== 'boolean') {
+            push(`users[${i}].createViaMaster must be a boolean when present`);
         }
         const p = u?.pointer;
         if (typeof p !== 'object' || p === null) { push(`users[${i}].pointer must be an object`); continue; }

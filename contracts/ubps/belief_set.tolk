@@ -30,6 +30,7 @@ fun onInternalMessage(in: InMessage) {
             storage.bsCount = msg.bsCount;
             storage.aSet = msg.aSet;
             storage.bsSet = msg.bsSet;
+            storage.name = msg.name;       // optional display name, set once (immutable)
             storage.save();
             reserveValue(in.valueCoins);
         }
@@ -70,4 +71,11 @@ get fun get_sets(): (int, int, cell, cell) {
 get fun get_master(): address {
     val storage = lazy BeliefSetStorage.load();
     return storage.ubpsMaster;
+}
+
+// Optional display name/description set at creation (null if none). NOT hashed, not an
+// id — display only.
+get fun get_name(): cell? {
+    val storage = lazy BeliefSetStorage.load();
+    return storage.name;
 }

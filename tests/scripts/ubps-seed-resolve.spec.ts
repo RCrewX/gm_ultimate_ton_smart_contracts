@@ -10,12 +10,19 @@ import {
     MAX_A,
     MAX_BS,
     UBPS_MAX_STRING_BYTES,
+    UBPS_MAX_NAME_BYTES,
 } from '../../scripts/seedUbps/types';
 import { stringId } from '../../wrappers/ubps/types';
 import { UBPS } from '../../wrappers/ubps/UBPS';
-import { buildQuestionMap, buildAnswerMap, beliefSetCreationOrder } from '../../scripts/seedUbps/resolve';
+import {
+    buildQuestionMap,
+    buildAnswerMap,
+    beliefSetCreationOrder,
+    assignBeliefSetIndices,
+    beliefSetSendArgs,
+} from '../../scripts/seedUbps/resolve';
 import { deriveUserWallet } from '../../scripts/seedUbps/wallets';
-import { estimateDeployerCost, fmtAddr } from '../../scripts/seedUbps/seedSteps';
+import { estimateDeployerCost, fmtAddr, chunk } from '../../scripts/seedUbps/seedSteps';
 import { runWithRestarts } from '../../scripts/seedUbps/provider';
 
 // A tiny valid seed used as the base for "good" + mutated "bad" cases.
@@ -59,6 +66,18 @@ describe('validateSeed — good cases', () => {
         ];
         const r = validateSeed(s, 'testnet');
         expect(r.ok).toBe(true);
+    });
+
+    it('accepts optional beliefSets[].name and users[].createViaMaster', () => {
+        const s = baseSeed();
+        s.beliefSets[0].name = 'My core beliefs';
+        s.beliefSets[1].name = 'x'.repeat(UBPS_MAX_NAME_BYTES); // exactly at the cap
+        s.users[0].createViaMaster = true;
+        s.users[1].createViaMaster = false;
+        // u.carol omits it (defaults to via-master)
+        const r = validateSeed(s, 'testnet');
+        expect(r.ok).toBe(true);
+        expect(r.errors).toHaveLength(0);
     });
 });
 
@@ -145,6 +164,30 @@ describe('validateSeed — bad cases', () => {
         expect(r.errors.join('\n')).toMatch(/> MAX_BS/);
     });
 
+    it('rejects a beliefSets[].name over the 256-byte cap', () => {
+        const s = baseSeed();
+        s.beliefSets[0].name = 'x'.repeat(UBPS_MAX_NAME_BYTES + 1);
+        const r = validateSeed(s, 'testnet');
+        expect(r.ok).toBe(false);
+        expect(r.errors.join('\n')).toMatch(/name is \d+ utf-8 bytes > 256/);
+    });
+
+    it('rejects a non-string beliefSets[].name', () => {
+        const s = baseSeed();
+        (s.beliefSets[0] as unknown as { name: unknown }).name = 123;
+        const r = validateSeed(s, 'testnet');
+        expect(r.ok).toBe(false);
+        expect(r.errors.join('\n')).toMatch(/name must be a string/);
+    });
+
+    it('rejects a non-boolean users[].createViaMaster', () => {
+        const s = baseSeed();
+        (s.users[0] as unknown as { createViaMaster: unknown }).createViaMaster = 'yes';
+        const r = validateSeed(s, 'testnet');
+        expect(r.ok).toBe(false);
+        expect(r.errors.join('\n')).toMatch(/createViaMaster must be a boolean/);
+    });
+
     it('rejects a cyclic sets graph', () => {
         const s = baseSeed();
         s.beliefSets = [
@@ -207,6 +250,51 @@ describe('label resolution', () => {
     it('beliefSetCreationOrder is leaf-first', () => {
         const order = beliefSetCreationOrder(baseSeed());
         expect(order.indexOf('bs.core')).toBeLessThan(order.indexOf('b.profile'));
+    });
+
+    it('beliefSetSendArgs carries the optional name (cell when present, null when absent)', () => {
+        const seed = baseSeed();
+        seed.beliefSets[0].name = 'My core beliefs';
+        const qMap = buildQuestionMap(ubps, fakeCode, seed);
+        const aMap = buildAnswerMap(ubps, fakeCode, seed, qMap);
+        const order = beliefSetCreationOrder(seed);
+        const bsMap = assignBeliefSetIndices(ubps, fakeCode, seed, order, 0);
+
+        const named = beliefSetSendArgs(seed.beliefSets[0], aMap, bsMap);
+        expect(named.name).not.toBeNull();
+        // the name cell is a snake string — decode it back
+        expect(named.name!.beginParse().loadStringTail()).toBe('My core beliefs');
+
+        const unnamed = beliefSetSendArgs(seed.beliefSets[1], aMap, bsMap);
+        expect(unnamed.name).toBeNull();
+    });
+
+    it('the BeliefSet address does NOT depend on the name (same index, name-free address calc)', () => {
+        // beliefSetAddress derives from (master, index) only; the name is post-creation
+        // content. Two otherwise-identical seeds (one named) resolve to the SAME address.
+        const named = baseSeed(); named.beliefSets[0].name = 'whatever';
+        const plain = baseSeed();
+        const order = beliefSetCreationOrder(named);
+        const aNamed = assignBeliefSetIndices(ubps, fakeCode, named, order, 0).get('bs.core')!;
+        const aPlain = assignBeliefSetIndices(ubps, fakeCode, plain, order, 0).get('bs.core')!;
+        expect(aNamed.address.equals(aPlain.address)).toBe(true);
+    });
+});
+
+describe('chunk (W4 batching grouping)', () => {
+    it('groups into batches of at most the W4 cap (4), preserving order', () => {
+        const items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        const batches = chunk(items, 4);
+        expect(batches.map(b => b.length)).toEqual([4, 4, 2]);
+        // order preserved within and across batches: flattening reproduces the input.
+        expect(batches.flat()).toEqual(items);
+        // no batch exceeds the cap.
+        for (const b of batches) expect(b.length).toBeLessThanOrEqual(4);
+    });
+
+    it('returns no batches for an empty list and a single batch when under the cap', () => {
+        expect(chunk([], 4)).toEqual([]);
+        expect(chunk([1, 2, 3], 4)).toEqual([[1, 2, 3]]);
     });
 });
 

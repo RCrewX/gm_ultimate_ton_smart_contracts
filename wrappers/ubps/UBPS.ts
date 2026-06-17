@@ -19,6 +19,7 @@ import {
     encodeActivateQuestion,
     encodeActivateAnswer,
     encodeCreateBeliefSet,
+    encodeCreateUnit,
 } from './types';
 
 // UBPS master — root authority. Storage: { ownerAddress, unitCode, questionCode,
@@ -87,11 +88,27 @@ export class UBPS implements Contract {
         bsCount: number,
         aSet: Cell,
         bsSet: Cell,
+        name: Cell | null = null,
     ) {
         await provider.internal(via, {
             value,
             sendMode: SendMode.PAY_GAS_SEPARATELY,
-            body: encodeCreateBeliefSet(root, aCount, bsCount, aSet, bsSet),
+            body: encodeCreateBeliefSet(root, aCount, bsCount, aSet, bsSet, name),
+        });
+    }
+
+    // Create a Unit through the master (alternate to a self-deploy). `via` is the user —
+    // their address becomes the Unit's owner; `up` is the optional initial pointer.
+    async sendCreateUnit(
+        provider: ContractProvider,
+        via: Sender,
+        value: bigint,
+        up: Address | null = null,
+    ) {
+        await provider.internal(via, {
+            value,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: encodeCreateUnit(up),
         });
     }
 

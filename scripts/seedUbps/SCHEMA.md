@@ -42,6 +42,7 @@ Strings (`questions[].text`, `answers[].text`) are capped at **127 utf-8 bytes**
     {
       "id": "bs.core",
       "root": false,                     // true => final Belief (public profile)
+      "name": "My core beliefs",         // OPTIONAL display name (<= 256 utf-8 bytes); see below
       "answers": ["a.happy.yes"],        // <= MAX_A (100); existing answer ids
       "sets": ["bs.other"]               // <= MAX_BS (20); existing beliefSet ids; ACYCLIC (DAG)
     }
@@ -50,11 +51,27 @@ Strings (`questions[].text`, `answers[].text`) are capped at **127 utf-8 bytes**
     {
       "id": "u.alice",
       "walletIndex": 0,                  // 0-based index into the derived test-wallet set
+      "createViaMaster": true,           // OPTIONAL (default true); see below
       "pointer": { "type": "belief", "ref": "bs.core" }   // type in belief|unit|none
     }
   ]
 }
 ```
+
+### `beliefSets[].name` (optional)
+A free-form display name/description for the BeliefSet, ≤ **256 utf-8 bytes**. It is
+**non-unique, immutable** (set once at creation), **NOT hashed, NOT an id, and NOT
+address-determining** — two BeliefSets with different names at the same index would
+share the same address. Purely for friendly display. Omit it for an unnamed set.
+
+### `users[].createViaMaster` (optional, default `true`)
+Controls HOW the user's Unit is created:
+- `true` (**default, recommended**) → **create THROUGH the master** (`CreateUnit`): a
+  single user-signed message deploys the Unit *and* applies the initial pointer, and the
+  master's tx history records the creation so the backend discovers the Unit via the
+  master funnel. The Unit lands at the SAME deterministic address as a self-deploy.
+- `false` → **self-deploy** the Unit (user-signed) then a separate user-signed
+  `SetPointer`. Same final state, two messages, no master tx for the creation.
 
 ### `users[].pointer`
 - `belief` → `ref` is a `beliefSets[].id` (usually a root one).
@@ -70,7 +87,8 @@ Strings (`questions[].text`, `answers[].text`) are capped at **127 utf-8 bytes**
 - `beliefSets[].answers.length ≤ MAX_A` (100); `beliefSets[].sets.length ≤ MAX_BS` (20).
 - The `beliefSets[].sets` graph is **acyclic** (topo-sortable).
 - `users[].walletIndex` is a unique non-negative integer; `pointer.type ∈ {belief,unit,none}`.
-- `text` ≤ 127 utf-8 bytes.
+- `text` ≤ 127 utf-8 bytes; `beliefSets[].name` (when present) ≤ 256 utf-8 bytes.
+- `users[].createViaMaster` (when present) is a boolean.
 
 **Deliberately NOT enforced** (per the UBPS concept): semantic belief
 validity/optimality, and **Unit→Unit subscription cycles are ALLOWED** (only the

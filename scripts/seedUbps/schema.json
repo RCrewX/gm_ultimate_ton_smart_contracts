@@ -64,6 +64,7 @@
         "properties": {
           "id": { "type": "string", "minLength": 1, "description": "Unique within beliefSets[]." },
           "root": { "type": "boolean", "description": "true => final Belief (public profile)." },
+          "name": { "type": "string", "minLength": 1, "maxLength": 256, "description": "OPTIONAL display name/description (<= 256 utf-8 bytes). Non-unique, immutable, NOT hashed, NOT an id, NOT address-determining. Display only." },
           "answers": {
             "type": "array",
             "maxItems": 100,
@@ -88,6 +89,7 @@
         "properties": {
           "id": { "type": "string", "minLength": 1, "description": "Unique within users[]." },
           "walletIndex": { "type": "integer", "minimum": 0, "description": "0-based, unique index into the derived test-wallet set." },
+          "createViaMaster": { "type": "boolean", "description": "OPTIONAL (default true). true => create the Unit THROUGH the master (CreateUnit: one user-signed op deploys the Unit and sets the initial pointer, recorded in the master tx history). false => self-deploy + a separate SetPointer." },
           "pointer": {
             "type": "object",
             "additionalProperties": false,

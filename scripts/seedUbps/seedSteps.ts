@@ -24,13 +24,18 @@
  */
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { Address, Cell, toNano } from '@ton/core';
+import { Address, Cell, toNano, internal } from '@ton/core';
 import { WalletContractV4 } from '@ton/ton';
 import { mnemonicToPrivateKey, keyPairFromSecretKey, KeyPair } from '@ton/crypto';
 import { compile } from '@ton/blueprint';
 import { ResilientProvider, LiveRpc } from './provider';
 import { readDeploymentData } from '../../lib/buildOutput';
-import { buildStringCell } from '../../wrappers/ubps/types';
+import {
+    buildStringCell,
+    encodeActivateQuestion,
+    encodeActivateAnswer,
+    encodeCreateBeliefSet,
+} from '../../wrappers/ubps/types';
 import { UBPS } from '../../wrappers/ubps/UBPS';
 import { Question } from '../../wrappers/ubps/Question';
 import { Answer } from '../../wrappers/ubps/Answer';
@@ -52,10 +57,17 @@ import {
 
 // --- tunable amounts ---
 const OP_VALUE = toNano('0.15');           // activate Q / A, create BS (>= UBPS_MIN_OP_VALUE 0.1)
-const UNIT_DEPLOY_VALUE = toNano('0.1');   // deploy a Unit
+const UNIT_DEPLOY_VALUE = toNano('0.1');   // self-deploy a Unit
+const CREATE_UNIT_VALUE = toNano('0.15');  // create a Unit via the master (deploy + initial pointer hop)
 const SET_POINTER_VALUE = toNano('0.1');   // SetPointer
 const FUND_FLOOR = toNano('0.25');         // top up a user wallet below this
-const FUND_AMOUNT = toNano('0.4');         // top-up amount (covers wallet deploy + unit deploy + setpointer)
+const FUND_AMOUNT = toNano('0.4');         // top-up amount (covers wallet deploy + unit create/deploy + setpointer)
+
+// WalletContractV4 carries up to 4 internal messages per signed external. The
+// deployer-driven master ops (ActivateQuestion / ActivateAnswer / CreateBeliefSet) are
+// grouped into batches of this size: one signed external (one seqno advance) per batch
+// instead of one per op — see sendDeployerBatch + the per-step batching below.
+const W4_MAX_MSGS_PER_EXTERNAL = 4;
 
 // --- preflight gas check (deployer / active wallet) ---
 const GAS_PER_MSG_MARGIN = toNano('0.03'); // fee headroom per deployer-originated message
@@ -218,6 +230,47 @@ async function waitSeqno(r: LiveRpc, wallet: WalletContractV4, prev: number, lab
     console.warn(`  ! ${label}: seqno did not advance within ${maxMs}ms (continuing).`);
 }
 
+/** Split into chunks of at most `size` (order preserved). Exported for unit tests. */
+export function chunk<T>(items: T[], size: number): T[][] {
+    const out: T[][] = [];
+    for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+    return out;
+}
+
+interface BatchedOp { to: Address; value: bigint; body: Cell }
+
+/**
+ * Send up to W4_MAX_MSGS_PER_EXTERNAL master ops in ONE signed external (one seqno
+ * advance) instead of one external per op. Runs inside a single prov.attempt: a restart
+ * re-runs the whole batch, and the caller re-reads each op's on-chain done-state first
+ * (so an op that already landed is excluded), making the batch idempotent. The internal
+ * messages are delivered to the master in list order (sequential lt), so a batch
+ * preserves any ordering dependency the caller encoded (e.g. BeliefSet leaf-first index
+ * assignment). Returns the number of ops actually sent (0 if all were already done).
+ */
+async function sendDeployerBatch(
+    r: LiveRpc,
+    wallet: WalletContractV4,
+    keyPair: KeyPair,
+    ops: BatchedOp[],
+    label: string,
+): Promise<number> {
+    if (ops.length === 0) return 0;
+    if (ops.length > W4_MAX_MSGS_PER_EXTERNAL) {
+        throw new Error(`sendDeployerBatch: ${ops.length} ops > W4 cap ${W4_MAX_MSGS_PER_EXTERNAL}`);
+    }
+    const opened = r.client.open(wallet);
+    const before = await r.withRateLimit(() => opened.getSeqno());
+    const transfer = wallet.createTransfer({
+        seqno: before,
+        secretKey: keyPair.secretKey,
+        messages: ops.map(o => internal({ to: o.to, value: o.value, body: o.body, bounce: true })),
+    });
+    await r.withRateLimit(() => opened.send(transfer));
+    await waitSeqno(r, wallet, before, label);
+    return ops.length;
+}
+
 // ===========================================================================
 //  Main entry — plan (always) then, unless dry-run, execute.
 // ===========================================================================
@@ -307,8 +360,10 @@ export async function run(opts: SeedRunOptions): Promise<Manifest> {
         console.log('           (dry-run: balance not checked — set MNEMONIC/PRIVATE_KEY for the live run to enforce this.)');
     }
 
-    // ---- Step 1: Questions ----
+    // ---- Step 1: Questions (batched: <=4 activations per signed external) ----
+    // Questions have NO inter-item ordering dependency, so any grouping is safe.
     console.log(`\n[Questions] ${seed.questions.length}`);
+    const pendingQ: { id: string; address: Address; body: Cell }[] = [];
     for (const q of seed.questions) {
         const r = qMap.get(q.id)!;
         const active = await isActive(prov, live, r.address);
@@ -319,23 +374,33 @@ export async function run(opts: SeedRunOptions): Promise<Manifest> {
         } else {
             manifest.questions[q.id] = { questionId: '0x' + r.questionId.toString(16), address: fmtAddr(r.address, network), status: 'active' };
             console.log(`  ${dryRun ? '+' : '>'} activate ${q.id} -> ${fmtAddr(r.address, network)}`);
-            if (canSend) {
-                await prov!.attempt(`activate ${q.id}`, async (rpc) => {
-                    // re-check (restart-safe: a prior partial send may have landed)
-                    const st = await rpc.withRateLimit(() => rpc.client.getContractState(r.address));
-                    if (st.state === 'active') return;
-                    const sender = rpc.client.open(deployer!.wallet).sender(deployer!.keyPair.secretKey);
-                    const before = await curSeqno(rpc, deployer!.wallet);
-                    await rpc.client.open(ubps).sendActivateQuestion(sender, OP_VALUE, r.questionId, buildStringCell(q.text));
-                    await waitSeqno(rpc, deployer!.wallet, before, `activate ${q.id}`);
-                });
-                manifest.summary.deployed++;
-            }
+            pendingQ.push({ id: q.id, address: r.address, body: encodeActivateQuestion(r.questionId, buildStringCell(q.text)) });
+        }
+    }
+    if (canSend && pendingQ.length > 0) {
+        const batches = chunk(pendingQ, W4_MAX_MSGS_PER_EXTERNAL);
+        console.log(`  -> sending ${pendingQ.length} activation(s) in ${batches.length} batched external(s) (<=${W4_MAX_MSGS_PER_EXTERNAL}/external)`);
+        for (const batch of batches) {
+            await prov!.attempt(`activateQ batch [${batch.map(b => b.id).join(', ')}]`, async (rpc) => {
+                const ops: BatchedOp[] = [];
+                for (const item of batch) {
+                    // re-read (restart-safe): skip any that already landed
+                    const st = await rpc.withRateLimit(() => rpc.client.getContractState(item.address));
+                    if (st.state === 'active') continue;
+                    ops.push({ to: masterAddr, value: OP_VALUE, body: item.body });
+                }
+                await sendDeployerBatch(rpc, deployer!.wallet, deployer!.keyPair, ops, `activateQ batch (${ops.length} op)`);
+            });
+            manifest.summary.deployed += batch.length;
         }
     }
 
-    // ---- Step 2: Answers ----
+    // ---- Step 2: Answers (batched: <=4 per external) ----
+    // Each Answer binds to its Question, which was activated in Step 1 (all Q before any
+    // A). Answers have no inter-item ordering dependency among themselves, so any grouping
+    // is safe.
     console.log(`\n[Answers] ${seed.answers.length}`);
+    const pendingA: { id: string; address: Address; body: Cell }[] = [];
     for (const a of seed.answers) {
         const r = aMap.get(a.id)!;
         const active = await isActive(prov, live, r.address);
@@ -344,26 +409,41 @@ export async function run(opts: SeedRunOptions): Promise<Manifest> {
             manifest.summary.skipped++;
             console.log(`  = ${a.id} already active -> ${fmtAddr(r.address, network)}`);
         } else {
+            const qAddr = qMap.get(a.question)!.address;
             manifest.answers[a.id] = { answerId: '0x' + r.answerId.toString(16), address: fmtAddr(r.address, network), status: 'active' };
             console.log(`  ${dryRun ? '+' : '>'} activate ${a.id} -> ${fmtAddr(r.address, network)}`);
-            if (canSend) {
-                const qAddr = qMap.get(a.question)!.address;
-                await prov!.attempt(`activate ${a.id}`, async (rpc) => {
-                    const st = await rpc.withRateLimit(() => rpc.client.getContractState(r.address));
-                    if (st.state === 'active') return;
-                    const sender = rpc.client.open(deployer!.wallet).sender(deployer!.keyPair.secretKey);
-                    const before = await curSeqno(rpc, deployer!.wallet);
-                    await rpc.client.open(ubps).sendActivateAnswer(sender, OP_VALUE, qAddr, r.answerId, buildStringCell(a.text));
-                    await waitSeqno(rpc, deployer!.wallet, before, `activate ${a.id}`);
-                });
-                manifest.summary.deployed++;
-            }
+            pendingA.push({ id: a.id, address: r.address, body: encodeActivateAnswer(qAddr, r.answerId, buildStringCell(a.text)) });
+        }
+    }
+    if (canSend && pendingA.length > 0) {
+        const batches = chunk(pendingA, W4_MAX_MSGS_PER_EXTERNAL);
+        console.log(`  -> sending ${pendingA.length} activation(s) in ${batches.length} batched external(s) (<=${W4_MAX_MSGS_PER_EXTERNAL}/external)`);
+        for (const batch of batches) {
+            await prov!.attempt(`activateA batch [${batch.map(b => b.id).join(', ')}]`, async (rpc) => {
+                const ops: BatchedOp[] = [];
+                for (const item of batch) {
+                    const st = await rpc.withRateLimit(() => rpc.client.getContractState(item.address));
+                    if (st.state === 'active') continue;
+                    ops.push({ to: masterAddr, value: OP_VALUE, body: item.body });
+                }
+                await sendDeployerBatch(rpc, deployer!.wallet, deployer!.keyPair, ops, `activateA batch (${ops.length} op)`);
+            });
+            manifest.summary.deployed += batch.length;
         }
     }
 
     // ---- Step 3: BeliefSets (leaf-first topo order; B (root) ends up last via the DAG) ----
+    // ORDERING MATTERS: the master assigns each BS the next monotonic index in ARRIVAL
+    // order, and the seeder precomputed indices in exactly bsOrder. So pending creates are
+    // collected and batched STRICTLY in bsOrder, and the internal messages in one external
+    // are delivered to the master in list order (sequential lt) → index assignment matches
+    // bsMap. Once a batch's external is accepted (seqno advances) all of its creates are
+    // guaranteed to process (TON delivery), so a batch is *less* prone to partial landing
+    // than per-op sends. The re-read guard (active && getCreated) excludes any already
+    // created, so a restart never double-creates within the same process.
     const byId = new Map(seed.beliefSets.map(bs => [bs.id, bs]));
     console.log(`\n[BeliefSets] ${seed.beliefSets.length} (creation order: ${bsOrder.join(', ')})`);
+    const pendingBS: { id: string; address: Address; body: Cell }[] = [];
     for (const id of bsOrder) {
         const bs = byId.get(id)!;
         const rbs: ResolvedBeliefSet = bsMap.get(id)!;
@@ -375,22 +455,30 @@ export async function run(opts: SeedRunOptions): Promise<Manifest> {
         } else {
             const args = beliefSetSendArgs(bs, aMap, bsMap);
             manifest.beliefSets[id] = { index: rbs.index, root: rbs.root, address: fmtAddr(rbs.address, network), status: 'created' };
-            console.log(`  ${dryRun ? '+' : '>'} create ${id} (idx ${rbs.index}${rbs.root ? ', root' : ''}, a=${args.aCount}, bs=${args.bsCount}) -> ${fmtAddr(rbs.address, network)}`);
-            if (canSend) {
-                await prov!.attempt(`create ${id}`, async (rpc) => {
-                    // re-check created (restart-safe: avoids a double create that would
-                    // consume a second master bsIndex). Provider errors bubble → restart;
-                    // only a confirmed created flag skips.
-                    const st = await rpc.withRateLimit(() => rpc.client.getContractState(rbs.address));
+            console.log(`  ${dryRun ? '+' : '>'} create ${id} (idx ${rbs.index}${rbs.root ? ', root' : ''}, a=${args.aCount}, bs=${args.bsCount}${args.name ? ', named' : ''}) -> ${fmtAddr(rbs.address, network)}`);
+            pendingBS.push({
+                id,
+                address: rbs.address,
+                body: encodeCreateBeliefSet(args.root, args.aCount, args.bsCount, args.aSet, args.bsSet, args.name),
+            });
+        }
+    }
+    if (canSend && pendingBS.length > 0) {
+        const batches = chunk(pendingBS, W4_MAX_MSGS_PER_EXTERNAL);
+        console.log(`  -> sending ${pendingBS.length} create(s) in ${batches.length} batched external(s) (<=${W4_MAX_MSGS_PER_EXTERNAL}/external, in creation order)`);
+        for (const batch of batches) {
+            await prov!.attempt(`createBS batch [${batch.map(b => b.id).join(', ')}]`, async (rpc) => {
+                const ops: BatchedOp[] = [];
+                // Preserve bsOrder WITHIN the batch (the order this array was built in).
+                for (const item of batch) {
+                    const st = await rpc.withRateLimit(() => rpc.client.getContractState(item.address));
                     if (st.state === 'active'
-                        && await rpc.withRateLimit(() => rpc.client.open(BeliefSet.createFromAddress(rbs.address)).getCreated())) return;
-                    const sender = rpc.client.open(deployer!.wallet).sender(deployer!.keyPair.secretKey);
-                    const before = await curSeqno(rpc, deployer!.wallet);
-                    await rpc.client.open(ubps).sendCreateBeliefSet(sender, OP_VALUE, args.root, args.aCount, args.bsCount, args.aSet, args.bsSet);
-                    await waitSeqno(rpc, deployer!.wallet, before, `create ${id}`);
-                });
-                manifest.summary.deployed++;
-            }
+                        && await rpc.withRateLimit(() => rpc.client.open(BeliefSet.createFromAddress(item.address)).getCreated())) continue;
+                    ops.push({ to: masterAddr, value: OP_VALUE, body: item.body });
+                }
+                await sendDeployerBatch(rpc, deployer!.wallet, deployer!.keyPair, ops, `createBS batch (${ops.length} op)`);
+            });
+            manifest.summary.deployed += batch.length;
         }
     }
 
@@ -402,6 +490,7 @@ export async function run(opts: SeedRunOptions): Promise<Manifest> {
         const unitAddr = unitAddrByUser.get(u.id)!;
         const target = resolvePointerTarget(u.pointer, bsMap, unitAddrByUser);
         const targetStr = target ? fmtAddr(target, network) : null;
+        const createViaMaster = u.createViaMaster !== false; // default true (recommended funnel)
 
         const balance = await getBalance(prov, live, dw.wallet.address);
         const needsFund = balance < FUND_FLOOR;
@@ -422,15 +511,19 @@ export async function run(opts: SeedRunOptions): Promise<Manifest> {
             pointer: targetStr,
             status: ptrMatches ? 'skipped' : 'set',
         };
-        console.log(`  ${u.id} wallet[${u.walletIndex}]=${fmtAddr(dw.wallet.address, network)} unit=${fmtAddr(unitAddr, network)}`);
-        console.log(`    fund:${needsFund ? `+${Number(FUND_AMOUNT) / 1e9}TON` : 'ok'} unit:${unitDeployed ? 'deployed' : (dryRun ? '+deploy' : '>deploy')} pointer:${ptrMatches ? 'skip' : `${u.pointer.type}->${targetStr ?? 'null'}`}`);
+        const createMode = createViaMaster ? 'via-master' : 'self-deploy';
+        console.log(`  ${u.id} wallet[${u.walletIndex}]=${fmtAddr(dw.wallet.address, network)} unit=${fmtAddr(unitAddr, network)} [${createMode}]`);
+        console.log(`    fund:${needsFund ? `+${Number(FUND_AMOUNT) / 1e9}TON` : 'ok'} unit:${unitDeployed ? 'deployed' : (dryRun ? '+create' : '>create')} pointer:${ptrMatches ? 'skip' : `${u.pointer.type}->${targetStr ?? 'null'}`}`);
 
         if (ptrMatches) manifest.summary.skipped++;
 
         if (canSend) {
-            // The whole user op (fund → deploy Unit → SetPointer) is ONE resilient unit:
-            // a provider restart re-runs it, and every sub-step re-reads on-chain state
-            // first, so a retry never double-funds / double-deploys / double-sets.
+            // The whole user op (fund → create Unit → ensure pointer) is ONE resilient
+            // unit: a provider restart re-runs it, and every sub-step re-reads on-chain
+            // state first, so a retry never double-funds / double-creates / double-sets.
+            // User-signed ops are inherently per-user (the Unit is user-owned + the pointer
+            // user-gated), so they CANNOT be batched across users — each user is already a
+            // single send in the via-master path (create+pointer in one CreateUnit op).
             await prov!.attempt(`user ${u.id}`, async (rpc) => {
                 const deployerSender = rpc.client.open(deployer!.wallet).sender(deployer!.keyPair.secretKey);
                 // 4a. fund (skip if already at/above the floor)
@@ -440,20 +533,37 @@ export async function run(opts: SeedRunOptions): Promise<Manifest> {
                     await waitSeqno(rpc, deployer!.wallet, before, `fund ${u.id}`);
                 }
                 const userSender = rpc.client.open(dw.wallet).sender(dw.keyPair.secretKey);
-                // 4b. deploy Unit (from the user wallet — first send also deploys the wallet)
-                if ((await rpc.withRateLimit(() => rpc.client.getContractState(unitAddr))).state !== 'active') {
+                const alreadyActive = (await rpc.withRateLimit(() => rpc.client.getContractState(unitAddr))).state === 'active';
+                if (!alreadyActive) {
+                    // 4b. CREATE the Unit (first send from the user wallet also deploys the wallet).
                     const before = await curSeqno(rpc, dw.wallet);
-                    await rpc.client.open(Unit.createFromConfig({ ubpsMaster: masterAddr, userAddress: dw.wallet.address }, codes.unitCode))
-                        .sendDeploy(userSender, UNIT_DEPLOY_VALUE);
-                    await waitSeqno(rpc, dw.wallet, before, `deploy unit ${u.id}`);
-                }
-                // 4c. SetPointer (user-gated; skip if it already equals target)
-                const nowPtr = await rpc.withRateLimit(() => rpc.client.open(Unit.createFromAddress(unitAddr)).getPointer());
-                const nowMatches = (nowPtr === null && target === null) || (!!nowPtr && !!target && nowPtr.equals(target));
-                if (!nowMatches) {
-                    const before = await curSeqno(rpc, dw.wallet);
-                    await rpc.client.open(Unit.createFromAddress(unitAddr)).sendSetPointer(userSender, SET_POINTER_VALUE, target);
-                    await waitSeqno(rpc, dw.wallet, before, `setPointer ${u.id}`);
+                    if (createViaMaster) {
+                        // ONE user-signed op: the master deploys the Unit at its deterministic
+                        // address (== self-deploy address) AND applies the initial pointer
+                        // (InitUnitPointer). No separate SetPointer this round — the master sets
+                        // it; a later run verifies/corrects via 4c if it ever diverges.
+                        await rpc.client.open(ubps).sendCreateUnit(userSender, CREATE_UNIT_VALUE, target);
+                        await waitSeqno(rpc, dw.wallet, before, `createUnit ${u.id}`);
+                    } else {
+                        // self-deploy the Unit, then set the pointer below (4c).
+                        await rpc.client.open(Unit.createFromConfig({ ubpsMaster: masterAddr, userAddress: dw.wallet.address }, codes.unitCode))
+                            .sendDeploy(userSender, UNIT_DEPLOY_VALUE);
+                        await waitSeqno(rpc, dw.wallet, before, `deploy unit ${u.id}`);
+                        const before2 = await curSeqno(rpc, dw.wallet);
+                        await rpc.client.open(Unit.createFromAddress(unitAddr)).sendSetPointer(userSender, SET_POINTER_VALUE, target);
+                        await waitSeqno(rpc, dw.wallet, before2, `setPointer ${u.id}`);
+                    }
+                } else {
+                    // 4c. Unit already exists — ensure the pointer equals target (user-gated).
+                    // InitUnitPointer can NEVER override a set pointer, so a correction here is
+                    // always an explicit user SetPointer.
+                    const nowPtr = await rpc.withRateLimit(() => rpc.client.open(Unit.createFromAddress(unitAddr)).getPointer());
+                    const nowMatches = (nowPtr === null && target === null) || (!!nowPtr && !!target && nowPtr.equals(target));
+                    if (!nowMatches) {
+                        const before = await curSeqno(rpc, dw.wallet);
+                        await rpc.client.open(Unit.createFromAddress(unitAddr)).sendSetPointer(userSender, SET_POINTER_VALUE, target);
+                        await waitSeqno(rpc, dw.wallet, before, `setPointer ${u.id}`);
+                    }
                 }
             });
             // approximate counters from the pre-plan reads (a resume skips landed work)

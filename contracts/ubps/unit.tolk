@@ -11,6 +11,7 @@ import "static"
 
 type AllowedMessagesToUnit =
     | SetPointer
+    | InitUnitPointer
     | ReturnExcessesBack
     | LiteralyAnything
 
@@ -23,6 +24,20 @@ fun onInternalMessage(in: InMessage) {
             assert (in.senderAddress == storage.userAddress) throw ERR_UBPS_INVALID_OWNER_SENDER;
             storage.up = msg.up;          // any address, or null to clear
             storage.save();
+            reserveValue(in.valueCoins);
+        }
+
+        // master-only INITIAL pointer (sent right after a CreateUnit deploy). Accepted
+        // ONLY from the master AND ONLY while the pointer is still null — so it sets the
+        // user-requested starting pointer but can NEVER override one the user has set.
+        // Idempotent: a no-op (no throw) if the pointer is already set, so re-running a
+        // CreateUnit on an existing Unit is safe and never clobbers the user's pointer.
+        InitUnitPointer => {
+            assert (in.senderAddress == storage.ubpsMaster) throw ERR_UBPS_NOT_MASTER;
+            if (storage.up == null) {
+                storage.up = msg.up;      // initial set (may itself be null = empty)
+                storage.save();
+            }
             reserveValue(in.valueCoins);
         }
 

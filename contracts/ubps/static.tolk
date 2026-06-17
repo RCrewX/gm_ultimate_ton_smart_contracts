@@ -61,6 +61,12 @@ struct UBPSStorage {
 // Unit (U) — the user's representation. MUTABLE: only the single Unit Pointer (up)
 // changes. `up` may point at a BS/B, at another Unit (follow), or be null (empty).
 // NO on-chain check that `up` is a valid UBPS contract (concept decision #6).
+//
+// `up` is NEVER part of the address-determining init data: the address derives from
+// (ubpsMaster, userAddress) with up=null, so a Unit has the SAME address whether the
+// user self-deploys it OR creates it via the master (CreateUnit funnel). The optional
+// initial pointer the master may set (InitUnitPointer) is applied AFTER the deterministic
+// deploy, so it never shifts the address.
 struct UnitStorage {
     ubpsMaster: address
     userAddress: address      // the owning user; only they may move the pointer
@@ -89,7 +95,7 @@ struct AnswerStorage {
 
 // BeliefSet (BS) — IMMUTABLE after creation. B is a BS with root=true. Created ONCE
 // by the master at the next index with its full content. Address derives from
-// bsIndex only (created=false, root=false, empty sets at deploy).
+// bsIndex only (created=false, root=false, empty sets, name=null at deploy).
 struct BeliefSetStorage {
     ubpsMaster: address
     bsIndex: uint64
@@ -99,6 +105,9 @@ struct BeliefSetStorage {
     bsCount: uint16           // declared count of BS addresses (<= MAX_BS)
     aSet: cell                // opaque set/list/tree of A addresses (off-chain shape)
     bsSet: cell               // opaque set/list/tree of BS addresses (recursion)
+    name: cell?               // OPTIONAL display name/description (Maybe(^Cell)); non-unique,
+                              // immutable, set once at creation; NOT hashed, NOT an id, and
+                              // NOT address-determining (null at deploy). Display only.
 }
 
 // -----------------------------------------------------------------------------
@@ -196,6 +205,7 @@ fun calcBeliefSetDeploy(ubpsMaster: address, bsIndex: uint64, beliefSetCode: cel
         bsCount: 0,
         aSet: emptyCell(),
         bsSet: emptyCell(),
+        name: null,           // populated AFTER the deterministic deploy; never address-determining
     };
     return { stateInit: { code: beliefSetCode, data: initStorage.toCell() } };
 }
@@ -223,12 +233,25 @@ struct (0x55425002) ActivateAnswer {
 }
 
 // Create a BeliefSet (root=false) or a final B (root=true) at the next index.
+// `name` is an OPTIONAL display string (Maybe(^Cell)) — non-unique, immutable, not
+// hashed, not address-determining. The master forwards it verbatim into PopulateBeliefSet.
 struct (0x55425003) CreateBeliefSet {
     root: bool
     aCount: uint16
     bsCount: uint16
     aSet: cell
     bsSet: cell
+    name: cell?
+}
+
+// Create a Unit THROUGH the master (alternate funnel to a user self-deploy, so the
+// master's tx history records the creation for backend discovery). The Unit is deployed
+// at its deterministic address (= the self-deploy address; up is NOT in the stateInit)
+// with userAddress = the CALLER (in.senderAddress), so a caller can only ever create
+// their OWN Unit. `up` is an OPTIONAL initial pointer the master applies post-deploy
+// (InitUnitPointer); omit/null to deploy an empty Unit.
+struct (0x55425004) CreateUnit {
+    up: address?
 }
 
 // =============================================================================
@@ -245,13 +268,24 @@ struct (0x55425012) ActivateAnswerMsg {
     answerBytes: cell
 }
 
-// master -> BS: deploy + populate the set ONCE (immutable thereafter).
+// master -> BS: deploy + populate the set ONCE (immutable thereafter). Carries the
+// optional display `name` (Maybe(^Cell)) set at creation alongside the content.
 struct (0x55425013) PopulateBeliefSet {
     root: bool
     aCount: uint16
     bsCount: uint16
     aSet: cell
     bsSet: cell
+    name: cell?
+}
+
+// master -> Unit: apply the optional INITIAL pointer right after a CreateUnit deploy.
+// The Unit accepts this ONLY from its master and ONLY while its pointer is still null
+// (uninitialized), so it sets the user-requested starting pointer without ever being
+// able to override a pointer the user has since set (the user-only-pointer invariant
+// holds: only SetPointer, gated to userAddress, moves it thereafter).
+struct (0x55425014) InitUnitPointer {
+    up: address?
 }
 
 // =============================================================================

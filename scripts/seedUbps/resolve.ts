@@ -10,7 +10,7 @@
  */
 import { Address, Cell } from '@ton/core';
 import { UBPS } from '../../wrappers/ubps/UBPS';
-import { stringId, buildAddressSet, MAX_A, MAX_BS } from '../../wrappers/ubps/types';
+import { stringId, buildAddressSet, buildNameCell, MAX_A, MAX_BS } from '../../wrappers/ubps/types';
 import {
     UbpsSeed,
     SeedBeliefSet,
@@ -126,6 +126,7 @@ export interface BeliefSetSendArgs {
     bsCount: number;
     aSet: Cell;
     bsSet: Cell;
+    name: Cell | null;        // optional display name (null when the seed omits it)
 }
 
 /** Build the sendCreateBeliefSet args for one BS (address sets from resolved maps). */
@@ -152,6 +153,7 @@ export function beliefSetSendArgs(
         bsCount: bsAddrs.length,
         aSet: buildAddressSet(aAddrs),
         bsSet: buildAddressSet(bsAddrs),
+        name: bs.name != null && bs.name.length > 0 ? buildNameCell(bs.name) : null,
     };
 }
 

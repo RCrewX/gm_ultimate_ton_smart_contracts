@@ -67,4 +67,10 @@ export class BeliefSet implements Contract {
         const r = await provider.get('get_master', []);
         return r.stack.readAddress();
     }
+
+    // Optional display name set at creation (null if none). Snake string cell.
+    async getName(provider: ContractProvider): Promise<Cell | null> {
+        const r = await provider.get('get_name', []);
+        return r.stack.readCellOpt();
+    }
 }

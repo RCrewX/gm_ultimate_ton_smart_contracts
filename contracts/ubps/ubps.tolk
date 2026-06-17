@@ -17,6 +17,7 @@ type AllowedMessagesToUBPS =
     | ActivateQuestion
     | ActivateAnswer
     | CreateBeliefSet
+    | CreateUnit
     | ReturnExcessesBack
     | LiteralyAnything
 
@@ -83,6 +84,7 @@ fun onInternalMessage(in: InMessage) {
                 bsCount: msg.bsCount,
                 aSet: msg.aSet,
                 bsSet: msg.bsSet,
+                name: msg.name,            // optional display name, forwarded verbatim
             };
             storage.nextBsIndex = index + 1;
             storage.save();
@@ -92,6 +94,24 @@ fun onInternalMessage(in: InMessage) {
                 dest: calcBeliefSetDeploy(contract.getAddress(), index, storage.beliefSetCode),
                 value: 0,
                 body: populate,
+            });
+            out.send(SEND_MODE_CARRY_ALL_REMAINING_BALANCE);
+        }
+
+        // ---- Create a Unit through the master (alternate funnel; user owns it) ----
+        CreateUnit => {
+            assert (in.valueCoins >= UBPS_MIN_OP_VALUE) throw ERR_UBPS_VALUE_TOO_LOW;
+            // userAddress is bound to the CALLER, so a sender can only create their OWN
+            // Unit. up is NOT in the stateInit (calcUnitDeploy fixes up=null), so the
+            // Unit lands at the SAME address as a self-deploy; the optional initial
+            // pointer is applied post-deploy via InitUnitPointer.
+            reserveValue(in.valueCoins);
+            val initPtr: InitUnitPointer = { up: msg.up };
+            val out = createMessage({
+                bounce: BounceMode.NoBounce,
+                dest: calcUnitDeploy(contract.getAddress(), in.senderAddress, storage.unitCode),
+                value: 0,
+                body: initPtr,
             });
             out.send(SEND_MODE_CARRY_ALL_REMAINING_BALANCE);
         }
