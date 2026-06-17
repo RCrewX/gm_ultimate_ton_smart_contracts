@@ -123,6 +123,42 @@ This will:
    [Troubleshooting](#troubleshooting-deployment)). The override URL must carry its own
    auth (the `api_key` goes in the URL).
 
+### Deploy modes (`--mode hard | retro`)
+
+`pnpm deploy` has two strategies, selected with `--mode` (default: **retro**):
+
+| Mode | What it does | When to use |
+|------|--------------|-------------|
+| **retro** (default) | **Change-detection incremental update.** Compiles every contract, compares each one's **on-chain code hash** to the freshly compiled hash, and acts minimally. | Routine updates of an already-deployed system. |
+| **hard** | **Classical full idempotent walk** — deploys any missing contract and seeds all R\* registries. Identical to the pre-`--mode` behavior. | First deploy, a GM change, or a fresh/partial system. |
+
+Retro's decision tree:
+
+- **GameManager changed (or absent)** → **REFUSE.** GM is the stable root and sole on-chain authority; a GM change is a full system migration. Re-run with `--mode hard`.
+- **Retranslator (R\*) absent** → **REFUSE** (a hot-swap migrates counters *from* the live R\*; nothing to migrate from). Use `--mode hard`.
+- **R\* changed (still live)** → **hot-swap R\***: migrate the mint counters, reseed the registries, repoint GM — then re-register any other changed leaf.
+- **Only leaf contracts changed** → redeploy the changed leaves and re-register them on the existing R\* via its setters.
+
+> ⚠ **Orphaning caveat.** Retro redeploys a changed leaf to a NEW deterministic address.
+> For **stateful** leaves this STRANDS the child state derived from the old address:
+> `ton_race_game` → all ships + coordinate cells; `jettonMinter` → all RUDA wallets +
+> balances; `nftPrinter`/`sbtPrinter` → all minted items; `ubps` → all Units/Questions/
+> Answers/BeliefSets. (SSM slots are ephemeral → safe.) Retro prints a loud **ORPHAN
+> WARNING** per affected contract. On **mainnet** an orphaning redeploy requires `--yes`.
+> Always run `--dry-run` first to inspect the plan.
+
+```bash
+pnpm deploy:dry:testnet            # print the retro action plan, send NOTHING (read-only)
+pnpm deploy:testnet                # retro (incremental) — default
+pnpm deploy:testnet:hard           # classical full deploy
+pnpm deploy:mainnet:hard           # classical full deploy to mainnet
+pnpm deploy:mainnet --yes          # mainnet retro, accept orphaning of stateful leaves
+ts-node scripts/deploySystem.ts --help   # full flag reference
+```
+
+A standalone R\* hot-swap (independent of a deploy) lives in `scripts/swapRetranslator.ts`
+(dry-run by default; `--execute` to swap) — see `scripts/RETRANSLATOR_SWAP_RUNBOOK.md`.
+
 ### Deploy to Testnet
 
 ```bash

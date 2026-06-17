@@ -1,13 +1,12 @@
 #!/usr/bin/env ts-node
 // SPDX-License-Identifier: UNLICENSED
 /**
- * Retranslator (R*) HOT-SWAP script — swap the swappable "brain" without
- * redeploying GameManager (GM).
+ * Retranslator (R*) HOT-SWAP script (standalone CLI) — swap the swappable "brain"
+ * without redeploying GameManager (GM).
  *
- * It reads the LIVE old R* state, builds a new R* v(old+1) with MIGRATED mint
- * counters (the §4.2.1 crux — else item-address collisions), deploys it, copies
- * the registries verbatim via GM relay, repoints GM (`SetRetranslator`), verifies
- * continuity, and refreshes `deployment_info/deployment_latest.json`.
+ * The swap flow itself lives in scripts/lib/swapRetranslator.ts (shared with retro
+ * mode of scripts/deploySystem.ts). This file is just the CLI: parse args, connect,
+ * supply the operator `send` primitive, and call `runRetranslatorSwap`.
  *
  * SAFETY: dry-run by DEFAULT — it only READS the chain and prints the plan. It
  * sends NOTHING (no deploy, no repoint) unless you pass `--execute`. Deploy is the
@@ -28,28 +27,14 @@
  *   PRIVATE_KEY   128-hex private key, OR  MNEMONIC  24-word mnemonic
  */
 
-import { toNano, beginCell, Address, Cell, internal } from '@ton/core';
+import { toNano, Address, Cell, internal } from '@ton/core';
 import { compile } from '@ton/blueprint';
 import { TonClient, WalletContractV4 } from '@ton/ton';
 import { keyPairFromSecretKey, mnemonicToPrivateKey } from '@ton/crypto';
 import * as dotenv from 'dotenv';
 
-import { GameManager } from '../wrappers/game_manager/GameManager';
-import { Retranslator } from '../wrappers/game_manager/Retranslator';
-import {
-    encodeSetJettonInfo,
-    encodeSetGamesInfo,
-    encodeSetToolsInfo,
-    encodeSetAllowBurn,
-} from '../wrappers/game_manager/RetranslatorTypes';
-import { GAS_COST_REDIRECT_MESSAGE, GAS_COST_SET_RETRANSLATOR } from '../wrappers/game_manager/types';
-import {
-    Network,
-    readDeploymentData,
-    readNetworkDeploymentData,
-    writeFullDeploymentData,
-    formatAddress,
-} from '../lib/buildOutput';
+import { Network, readNetworkDeploymentData } from '../lib/buildOutput';
+import { runRetranslatorSwap, SwapContext, SwapSend } from './lib/swapRetranslator';
 import { ProviderManager, getTonClientWithRateLimit, type Network as ProviderNetwork } from 'ton-provider-system';
 
 dotenv.config();
@@ -176,128 +161,44 @@ async function main(): Promise<void> {
     const { client, withRateLimit } = await getTonClientWithRateLimit(pm);
 
     const retranslatorCode = await compile('Retranslator');
-    const gameManager = client.open(GameManager.createFromAddress(gmAddress));
-    const oldR = client.open(Retranslator.createFromAddress(oldRAddress));
 
-    // Sanity: GM must currently point at the R* the deployment file names.
-    const gmPointsAt = await withRateLimit(() => gameManager.getRetranslatorAddress());
-    if (!gmPointsAt.equals(oldRAddress)) {
-        throw new Error(
-            `GM points at ${gmPointsAt.toString()} but deployment_latest names ${oldRAddress.toString()}. Reconcile before swapping.`,
-        );
+    // The operator send primitive — only wired on --execute (loads the wallet).
+    let send: SwapSend = async () => {
+        throw new Error('internal: send invoked during dry-run');
+    };
+    if (execute) {
+        const { wallet, keyPair } = await loadWallet();
+        const bal = await withRateLimit(() => client.getBalance(wallet.address));
+        console.log(`Operator wallet: ${wallet.address.toString()}  balance ${(Number(bal) / 1e9).toFixed(3)} TON`);
+        if (bal < toNano('1')) throw new Error('operator wallet balance < 1 TON; top up before swapping.');
+        send = (to, value, body, op, stateInit) =>
+            sendAndWait(client, wallet, keyPair, to, value, withRateLimit, op, body, stateInit);
     }
 
-    // ---- READ live old R* state (the migration source of truth) ----
-    const oldVersion = await withRateLimit(() => oldR.getVersion());
-    const nextNftIndex = await withRateLimit(() => oldR.getNextNftIndex());
-    const nextSbtIndex = await withRateLimit(() => oldR.getNextSbtIndex());
-    const allowBurn = await withRateLimit(() => oldR.getAllowBurn());
-    const jettonInfo = await withRateLimit(() => oldR.getJettonInfoCell()).catch(() => null);
-    const gamesInfo = await withRateLimit(() => oldR.getGamesInfoCell()).catch(() => null);
-    const toolsInfo = await withRateLimit(() => oldR.getToolsInfo()).catch(() => null);
-
-    const targetVersion = newVersion ?? oldVersion + 1n;
-    if (targetVersion <= oldVersion) throw new Error(`--version ${targetVersion} must be > current version ${oldVersion}`);
-
-    // ---- BUILD new R* init with MIGRATED counters ----
-    const newR = Retranslator.createFromConfig(
-        {
-            gameManagerAddress: gmAddress,
-            ownerAddress: await withRateLimit(() => oldR.getOwner()),
-            version: targetVersion,
-            active: true,
-            allow_burn: allowBurn,
-            nextNftIndex, // migrated — prevents item-address collisions
-            nextSbtIndex, // migrated
-        },
-        retranslatorCode,
-    );
-
-    console.log('\n--- MIGRATION PLAN ---');
-    console.log(`version       : ${oldVersion}  ->  ${targetVersion}`);
-    console.log(`nextNftIndex  : ${nextNftIndex} (migrated verbatim)`);
-    console.log(`nextSbtIndex  : ${nextSbtIndex} (migrated verbatim)`);
-    console.log(`allow_burn    : ${allowBurn}`);
-    console.log(`registries    : jettonInfo=${jettonInfo ? 'copy' : 'none'} gamesInfo=${gamesInfo ? 'copy' : 'none'} toolsInfo=${toolsInfo ? 'copy' : 'none'}`);
-    console.log(`new R* addr   : ${newR.address.toString()}`);
-    if (newR.address.equals(oldRAddress)) throw new Error('computed new R* address == old R* — version did not change the address; abort.');
-    console.log('steps         : deploy newR* -> seed registries via GM relay -> SetRetranslator(newR*) -> verify -> regen deployment json');
-
-    if (!execute) {
-        console.log('\nDRY-RUN complete. No messages were sent. Re-run with --execute (operator) to perform the swap.');
-        return;
-    }
-
-    // ===================== EXECUTE (operator only) =====================
-    console.log('\n--- EXECUTING SWAP ---');
-    const { wallet, keyPair } = await loadWallet();
-    const bal = await withRateLimit(() => client.getBalance(wallet.address));
-    console.log(`Operator wallet: ${wallet.address.toString()}  balance ${(Number(bal) / 1e9).toFixed(3)} TON`);
-    if (bal < toNano('1')) throw new Error('operator wallet balance < 1 TON; top up before swapping.');
-
-    // 1) deploy new R*
-    const alreadyThere = (await withRateLimit(() => client.getContractState(newR.address))).state === 'active';
-    if (alreadyThere) {
-        console.log('  · new R* already deployed; skipping deploy');
-    } else {
-        await sendAndWait(client, wallet, keyPair, newR.address, toNano('0.5'), withRateLimit, 'deploy newR*', beginCell().endCell(), {
-            code: retranslatorCode,
-            data: newR.init!.data,
-        });
-    }
-
-    // 2) seed registries on new R* via GM relay (opaque copy)
-    const relay = (body: Cell, op: string) =>
-        sendAndWait(
-            client,
-            wallet,
-            keyPair,
-            gmAddress,
-            GAS_COST_REDIRECT_MESSAGE + toNano('0.9'),
-            withRateLimit,
-            op,
-            GameManager.redirectMessage(newR.address, body, toNano('0.9')),
-        );
-    if (jettonInfo) await relay(encodeSetJettonInfo({ jettonInfo }), 'seed jettonInfo');
-    if (gamesInfo) await relay(encodeSetGamesInfo({ gamesInfo }), 'seed gamesInfo');
-    if (toolsInfo) await relay(encodeSetToolsInfo({ toolsInfo }), 'seed toolsInfo');
-    await relay(encodeSetAllowBurn({ allow_burn: allowBurn }), 'seed allowBurn');
-
-    // 3) repoint GM atomically
-    await sendAndWait(
+    const ctx: SwapContext = {
         client,
-        wallet,
-        keyPair,
-        gmAddress,
-        GAS_COST_SET_RETRANSLATOR + toNano('0.05'),
         withRateLimit,
-        'SetRetranslator(newR*)',
-        GameManager.setRetranslatorMessage(newR.address),
-    );
+        network,
+        isTestnet,
+        gmAddress,
+        oldRAddress,
+        retranslatorCode,
+        send,
+    };
 
-    // 4) verify continuity
-    console.log('\n--- VERIFY ---');
-    const newGmPointsAt = await withRateLimit(() => gameManager.getRetranslatorAddress());
-    const newROpened = client.open(Retranslator.createFromAddress(newR.address));
-    const vNew = await withRateLimit(() => newROpened.getVersion());
-    const nftNew = await withRateLimit(() => newROpened.getNextNftIndex());
-    const sbtNew = await withRateLimit(() => newROpened.getNextSbtIndex());
-    const ok =
-        newGmPointsAt.equals(newR.address) && vNew === targetVersion && nftNew === nextNftIndex && sbtNew === nextSbtIndex;
-    console.log(`GM -> ${newGmPointsAt.toString()} (${newGmPointsAt.equals(newR.address) ? 'OK' : 'MISMATCH'})`);
-    console.log(`version=${vNew} nextNft=${nftNew} nextSbt=${sbtNew} (${ok ? 'continuity OK' : 'CHECK FAILED'})`);
-    if (!ok) throw new Error('post-swap verification FAILED — investigate before declaring the swap done.');
-
-    // 5) refresh deployment_latest.json (R* address only; GM untouched)
-    const full = readDeploymentData();
-    full.timestamp = new Date().toISOString();
-    full[network].retranslator = formatAddress(newR.address, isTestnet);
-    writeFullDeploymentData(full);
-    console.log('\nSwap complete. deployment_latest.json updated with the new R* address.');
-    console.log(`Old R* (${oldRAddress.toString()}) is now inert (GM no longer routes to it). Keep it parked for rollback until the new R* is proven.`);
+    const res = await runRetranslatorSwap(ctx, { dryRun: !execute, newVersion });
+    if (!res.executed) {
+        console.log('\nDRY-RUN complete. No messages were sent. Re-run with --execute (operator) to perform the swap.');
+    }
 }
 
-main().catch((e) => {
-    console.error('\nswapRetranslator FAILED:', e?.message || e);
-    process.exit(1);
-});
+main()
+    .then(() => {
+        ProviderManager.resetInstance();
+        process.exit(0);
+    })
+    .catch((e) => {
+        console.error('\nswapRetranslator FAILED:', e?.message || e);
+        ProviderManager.resetInstance();
+        process.exit(1);
+    });

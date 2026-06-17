@@ -35,7 +35,7 @@ import { JettonWallet } from '../wrappers/tep/jetton/JettonWallet';
 import { Subcontract } from '../wrappers/subcontract/Subcontract';
 import { NFTPrinter } from '../wrappers/printers/nft_printer/NFTPrinter';
 import { SBTPrinter } from '../wrappers/printers/sbt_printer/SBTPrinter';
-import { ToolsInfo } from '../wrappers/game_manager/RetranslatorTypes';
+import { ToolsInfo, GamesInfo } from '../wrappers/game_manager/RetranslatorTypes';
 import { GAS_COST_REDIRECT_MESSAGE, GAS_COST_SET_RETRANSLATOR } from '../wrappers/game_manager/types';
 import { GAS_COST_MANUAL_DEPLOY } from '../wrappers/subcontract/types';
 import { BASIC_STORAGE_TAX } from '../wrappers/ton_race_game/types';
@@ -46,6 +46,7 @@ import {
     ContractCodes,
     writeFullDeploymentData,
     readDeploymentData,
+    formatAddress,
 } from '../lib/buildOutput';
 import { buildGameConstants } from '../lib/gameConstants';
 import {
@@ -54,7 +55,19 @@ import {
     calculateNetworkAddresses,
     createPrinters,
     buildOfflineDeploymentData,
+    type CompiledContracts,
 } from './lib/abiCore';
+import { detectChanges } from './lib/changeDetection';
+import {
+    planRetroActions,
+    orphanWarning,
+    type ChangeReport,
+    type TrackedDescriptor,
+    type LeafChange,
+    type LeafKind,
+} from './lib/changeClassifier';
+import { runRetranslatorSwap, type SwapContext, type SwapSend } from './lib/swapRetranslator';
+import { verifyDeploymentHashes } from './lib/verifyDeploymentHashes';
 import {
     ProviderManager,
     getTonClientWithRateLimit,
@@ -78,11 +91,20 @@ const BASE_MINT_AMOUNT = 5500n;
 // CLI Argument Parsing
 // ============================================================================
 
+/** hard = classical full idempotent walk; retro = change-detection incremental update. */
+type DeployMode = 'hard' | 'retro';
+
 interface CliOptions {
     network: Network;
     shipStationId: bigint;
     /** Offline ABI publish: assemble the full artifact with placeholder addrs, no RPC/keys. */
     offline: boolean;
+    /** Deploy strategy (default: retro). */
+    mode: DeployMode;
+    /** Retro: print the computed action plan and send NOTHING. */
+    dryRun: boolean;
+    /** Retro: skip the mainnet orphan confirmation gate before an orphaning send. */
+    assumeYes: boolean;
 }
 
 function parseCliArgs(): CliOptions {
@@ -90,6 +112,9 @@ function parseCliArgs(): CliOptions {
     let network: Network = 'testnet';
     let shipStationId = 1n;
     let offline = false;
+    let mode: DeployMode = 'retro';
+    let dryRun = false;
+    let assumeYes = false;
 
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
@@ -100,6 +125,16 @@ function parseCliArgs(): CliOptions {
             network = 'testnet';
         } else if (arg === '--offline') {
             offline = true;
+        } else if (arg === '--mode' && args[i + 1]) {
+            const m = args[++i];
+            if (m !== 'hard' && m !== 'retro') {
+                throw new Error(`--mode must be 'hard' or 'retro', got '${m}'`);
+            }
+            mode = m;
+        } else if (arg === '--dry-run') {
+            dryRun = true;
+        } else if (arg === '--yes' || arg === '-y') {
+            assumeYes = true;
         } else if (arg === '--id' && args[i + 1]) {
             const parsed = BigInt(args[++i]);
             if (parsed < 1n) {
@@ -113,24 +148,39 @@ Deploy System - TON Game Platform Deployment
 Usage:
   pnpm deploy [options]
 
+Modes (--mode):
+  retro (default) Change-detection incremental update. Compiles, compares each
+                  contract's on-chain code hash, and acts minimally:
+                    • GM changed     -> REFUSE (re-run with --mode hard)
+                    • R* changed     -> hot-swap R* (migrate counters + repoint GM)
+                    • leaves changed -> redeploy + re-register on R* (orphans state!)
+  hard            Classical full idempotent walk (deploy missing, seed all R*
+                  registries). Same as the pre-mode behavior.
+
 Options:
   --testnet       Deploy to testnet (default)
   --mainnet       Deploy to mainnet
+  --mode <m>      'hard' or 'retro' (default: retro)
+  --dry-run       Retro only: print the action plan against live state, send nothing
+  --yes, -y       Retro only: skip the mainnet orphan-confirmation gate
   --offline       Regenerate deployment_latest.json OFFLINE (full ABI, placeholder
                   addrs, deployed:false). No RPC/keys. Same as 'pnpm abi'.
   --id <n>        Ship station ID (default: 1)
   --help, -h      Show this help
 
 Environment Variables:
-  PRIVATE_KEY          128-hex private key (required)
+  PRIVATE_KEY          128-hex private key (required for sends)
   MNEMONIC             24-word mnemonic (alternative to PRIVATE_KEY)
   JETTON_CONTENT_URI   Jetton metadata URI
   OWNER_PUBLIC_KEY     Public key for external signatures
 
 Examples:
-  pnpm deploy                     # Deploy to testnet
-  pnpm deploy --mainnet           # Deploy to mainnet
-  pnpm deploy --id 5              # Deploy with ship station ID 5
+  pnpm deploy                     # testnet, RETRO (incremental)
+  pnpm deploy --dry-run           # testnet, print retro plan only (no sends)
+  pnpm deploy --mode hard         # testnet, classical full deploy
+  pnpm deploy --mainnet --mode hard
+  pnpm deploy --mainnet --yes     # mainnet retro, accept orphaning
+  pnpm deploy --id 5              # ship station ID 5
 `);
             process.exit(0);
         }
@@ -145,7 +195,7 @@ Examples:
         }
     }
 
-    return { network, shipStationId, offline };
+    return { network, shipStationId, offline, mode, dryRun, assumeYes };
 }
 
 // ============================================================================
@@ -560,21 +610,17 @@ async function runOfflineAbi(): Promise<void> {
     console.log('✅ ABI regenerated (offline, deployed:false). Run `pnpm deploy` to make addresses live.');
 }
 
-async function main(): Promise<void> {
-    const options = parseCliArgs();
+/**
+ * HARD redeploy — the classical full idempotent walk (unchanged behavior): deploy
+ * any missing contract (checkAndDeploy skips live ones) and seed ALL R* registries.
+ * This is exactly what `pnpm deploy` did before `--mode` existed.
+ */
+async function hardRedeploy(options: CliOptions): Promise<void> {
     const { network, shipStationId } = options;
     const isTestnet = network === 'testnet';
     const timestamp = new Date().toISOString();
 
-    // OFFLINE ABI publish — no RPC, no keys. Same producer + shared assembly as a live
-    // deploy, but with placeholder addresses (ownerPublicKey=0 → only ship_station is a
-    // placeholder) and deployed:false. This is what `pnpm abi` runs.
-    if (options.offline) {
-        await runOfflineAbi();
-        return;
-    }
-
-    console.log('\n=== TON Game System Deployment ===');
+    console.log('\n=== TON Game System Deployment (mode: hard) ===');
     console.log(`Network: ${network}`);
     console.log(`Ship Station ID: ${shipStationId.toString()}`);
     console.log('');
@@ -1078,6 +1124,416 @@ async function main(): Promise<void> {
         console.error('========================\n');
         // Re-throw to let the bottom handler clean up and exit
         throw error;
+    }
+}
+
+// ============================================================================
+// RETRO update (change-detection-driven incremental deploy)
+// ============================================================================
+
+const JETTON_DEFAULT_URI = 'https://example.com/jetton.json';
+
+/** Build the freshly-compiled contract instances retro may need to redeploy. */
+function buildRetroInstances(
+    compiled: CompiledContracts,
+    ownerAddress: Address,
+    ownerPublicKey: bigint,
+    shipStationId: bigint,
+    jettonContentUri: string,
+) {
+    const gameManager = GameManager.createFromConfig({ ownerAddress }, compiled.gameManagerCode);
+    const game = Game.createFromConfig(
+        { managerAddress: gameManager.address, shipCode: compiled.shipCode, coordinateCellCode: compiled.coordinateCellCode },
+        compiled.gameCode,
+    );
+    const jettonMinter = JettonMinter.createFromConfig(
+        {
+            admin: gameManager.address,
+            content: jettonContentToCell({ type: 1, uri: jettonContentUri }),
+            wallet_code: compiled.jettonWalletCode,
+        },
+        compiled.jettonMinterCode,
+    );
+    const ssm = SoullessSlotMachine.createFromConfig(
+        { ownerAddress: gameManager.address, ssmSlotCode: compiled.ssmSlotCode, rudaMasterAddress: jettonMinter.address },
+        compiled.ssmCode,
+    );
+    const ubps = UBPS.createFromConfig(
+        {
+            ownerAddress,
+            unitCode: compiled.ubpsUnitCode,
+            questionCode: compiled.ubpsQuestionCode,
+            answerCode: compiled.ubpsAnswerCode,
+            beliefSetCode: compiled.ubpsBeliefSetCode,
+        },
+        compiled.ubpsCode,
+    );
+    const ownerShip = Ship.createFromConfig(
+        { userAddress: ownerAddress, gameAddress: game.address, coordinateCellCode: compiled.coordinateCellCode },
+        compiled.shipCode,
+    );
+    const shipStation = Subcontract.createFromConfig(
+        { ownerAddress, id: shipStationId, ownerPublicKey },
+        compiled.subcontractCode,
+    );
+    const { nftPrinter, sbtPrinter } = createPrinters(
+        ownerAddress, gameManager.address, compiled.nftPrinterCode, compiled.sbtPrinterCode,
+        compiled.nftPrinterItemCode, compiled.sbtPrinterItemCode,
+    );
+    return { gameManager, game, jettonMinter, ssm, ubps, ownerShip, shipStation, nftPrinter, sbtPrinter };
+}
+
+type RetroInstances = ReturnType<typeof buildRetroInstances>;
+
+/** Map a tracked leaf key → its freshly-compiled instance + deploy value + state init. */
+function leafDeployTarget(
+    key: string,
+    inst: RetroInstances,
+): { address: Address; value: bigint; init: { code: Cell; data: Cell } } {
+    switch (key) {
+        case 'jettonMinter':
+            return { address: inst.jettonMinter.address, value: toNano('0.5'), init: inst.jettonMinter.init! };
+        case 'nftPrinter':
+            return { address: inst.nftPrinter.address, value: toNano('0.2'), init: inst.nftPrinter.init! };
+        case 'sbtPrinter':
+            return { address: inst.sbtPrinter.address, value: toNano('0.2'), init: inst.sbtPrinter.init! };
+        case 'games.ton_race_game.game':
+            return { address: inst.game.address, value: toNano('0.5'), init: inst.game.init! };
+        case 'games.soulless_slot_machine.ssm':
+            return { address: inst.ssm.address, value: toNano('0.5'), init: inst.ssm.init! };
+        case 'games.ubps.ubps':
+            return { address: inst.ubps.address, value: toNano('0.5'), init: inst.ubps.init! };
+        case 'games.ton_race_game.ownerShip':
+            return { address: inst.ownerShip.address, value: toNano('0.5'), init: inst.ownerShip.init! };
+        case 'ship_station':
+            return {
+                address: inst.shipStation.address,
+                value: (GAS_COST_MANUAL_DEPLOY + BASIC_STORAGE_TAX) * 2n,
+                init: inst.shipStation.init!,
+            };
+        default:
+            throw new Error(`leafDeployTarget: unknown leaf key ${key}`);
+    }
+}
+
+/** Human label for the re-registration setter a leaf triggers (Step 7). */
+function setterLabel(kind: LeafKind): string {
+    switch (kind) {
+        case 'jettonMinter':
+            return 'setJettonInfo (R*)';
+        case 'nftPrinter':
+        case 'sbtPrinter':
+            return 'setToolsInfo (R*)';
+        case 'ssm':
+        case 'ton_race_game':
+        case 'ubps':
+            return 'setGamesInfo (R*)';
+        case 'subcontract':
+        case 'ownerShip':
+            return 'none (not in an R* registry)';
+    }
+}
+
+function printChangeReport(report: ChangeReport, descriptors: TrackedDescriptor[]): void {
+    console.log('\n--- CHANGE DETECTION (on-chain code hash vs freshly compiled) ---');
+    for (const d of descriptors) {
+        const state =
+            d.onChainHash === null ? 'NOT-DEPLOYED' : d.onChainHash === d.compiledHash ? 'unchanged' : 'CHANGED';
+        console.log(`  ${state.padEnd(13)} ${d.key} (${d.role})`);
+    }
+    console.log(
+        `Summary: gmChanged=${report.gmChanged} gmNotDeployed=${report.gmNotDeployed} ` +
+        `rStarChanged=${report.rStarChanged} rStarNotDeployed=${report.rStarNotDeployed} ` +
+        `leafChanges=${report.leafChanges.length} unchanged=${report.unchanged.length}`,
+    );
+}
+
+/**
+ * Refresh ONLY the contractCodes + constants in deployment_latest.json (addresses
+ * and deployed flags preserved). Used on an up-to-date retro run when the checked-in
+ * artifact's hashes have drifted from source (e.g. a comment-only recompile).
+ */
+function refreshArtifactCodes(compiled: CompiledContracts): void {
+    const existing = readDeploymentData();
+    existing.timestamp = new Date().toISOString();
+    existing.constants = buildGameConstants();
+    existing.contractCodes = buildFullContractCodes(compiled);
+    writeFullDeploymentData(existing);
+}
+
+/** Write the new address of a redeployed leaf back into the network deployment data. */
+function setLeafAddress(net: NetworkDeploymentData, key: string, address: Address, isTestnet: boolean): void {
+    const info = formatAddress(address, isTestnet);
+    const games = (net.games ??= {});
+    switch (key) {
+        case 'jettonMinter':
+            net.jettonMinter = info; break;
+        case 'nftPrinter':
+            net.nftPrinter = info; break;
+        case 'sbtPrinter':
+            net.sbtPrinter = info; break;
+        case 'ship_station':
+            net.ship_station = info; break;
+        case 'games.ton_race_game.game':
+            games.ton_race_game = { ...games.ton_race_game, game: info }; break;
+        case 'games.ton_race_game.ownerShip':
+            // Preserve the existing game address (fall back to the new one if absent).
+            games.ton_race_game = { game: games.ton_race_game?.game ?? info, ownerShip: info }; break;
+        case 'games.soulless_slot_machine.ssm':
+            games.soulless_slot_machine = { ssm: info }; break;
+        case 'games.ubps.ubps':
+            games.ubps = { ubps: info }; break;
+        default:
+            throw new Error(`setLeafAddress: unknown leaf key ${key}`);
+    }
+}
+
+async function retroUpdate(options: CliOptions): Promise<void> {
+    const { network, dryRun, assumeYes } = options;
+    const isTestnet = network === 'testnet';
+
+    console.log(`\n=== TON Game System — RETRO update (${network}${dryRun ? ', DRY-RUN' : ''}) ===`);
+
+    // --- provider + read-only client (same setup as hard, minus the wallet) ---
+    const pm = ProviderManager.getInstance();
+    await pm.init(network as ProviderNetwork);
+    activeProviderManager = pm;
+    const customRpcEndpoint = (process.env.TON_RPC_ENDPOINT || '').trim();
+    if (customRpcEndpoint) {
+        pm.setCustomEndpoint(customRpcEndpoint);
+        usingCustomEndpoint = true;
+        console.log('Using custom RPC endpoint override from TON_RPC_ENDPOINT (provider rotation disabled)');
+    }
+    const { client, withRateLimit } = await getTonClientWithRateLimit(pm);
+    console.log(`Connected to: ${await pm.getEndpoint()}`);
+
+    // --- recorded deployment for this network ---
+    const netData = readDeploymentData()[network];
+    if (!netData?.gameManager) {
+        console.error(
+            `No recorded GameManager for ${network} in deployment_latest.json. Retro updates an existing system; ` +
+            `for a first deploy use \`--mode hard\`.`,
+        );
+        process.exit(1);
+    }
+
+    // --- compile + detect on-chain code changes ---
+    console.log('Compiling contracts + detecting on-chain code changes...');
+    const compiled = await compileAllContracts();
+    const { report, descriptors } = await detectChanges(client, withRateLimit, netData, compiled);
+    printChangeReport(report, descriptors);
+
+    // secondary (informational) signal: checked-in artifact vs source.
+    try {
+        const { ok, mismatches, missing } = await verifyDeploymentHashes();
+        if (!ok) {
+            console.log(
+                `(secondary) deployment_latest.json artifact differs from source — ${mismatches.length} mismatch(es), ` +
+                `${missing.length} missing. It will be refreshed by this run.`,
+            );
+        }
+    } catch {
+        // non-fatal — the on-chain comparison above is authoritative
+    }
+
+    const plan = planRetroActions(report);
+
+    if (plan.refuse) {
+        console.error(`\nREFUSE: ${plan.refuseReason}`);
+        process.exit(2);
+    }
+    if (plan.upToDate) {
+        console.log('\n✅ System is up to date — no GM / R* / leaf code changes detected on-chain.');
+        if (!dryRun) {
+            const { ok } = await verifyDeploymentHashes();
+            if (!ok) {
+                console.log('Refreshing deployment_latest.json contractCodes to match source (addresses unchanged)...');
+                refreshArtifactCodes(compiled);
+            }
+        }
+        return;
+    }
+
+    // --- print the ordered action plan + orphan warnings ---
+    console.log('\n--- RETRO ACTION PLAN ---');
+    if (plan.swap) {
+        console.log('• Hot-swap Retranslator (R*): migrate counters + reseed registries + repoint GM.');
+    }
+    const orphaning = plan.leafRedeploys.some((l) => orphanWarning(l.kind) !== null);
+    for (const leaf of plan.leafRedeploys) {
+        console.log(
+            `• Redeploy leaf ${leaf.key} (${leaf.kind}, ${leaf.status})` +
+            `${leaf.oldAddr ? ` [old ${leaf.oldAddr}]` : ''}`,
+        );
+        const w = orphanWarning(leaf.kind);
+        if (w) console.log(`    ⚠ ORPHAN WARNING: ${w}`);
+        console.log(`    ↳ re-register via ${setterLabel(leaf.kind)}`);
+    }
+
+    if (dryRun) {
+        console.log('\nDRY-RUN complete. No messages were sent. Re-run without --dry-run (operator) to apply.');
+        return;
+    }
+
+    // ============ LIVE EXECUTION (operator only) ============
+    // mainnet orphan gate: refuse to strand stateful child contracts without --yes.
+    if (network === 'mainnet' && orphaning && !assumeYes) {
+        throw new Error(
+            'Refusing to orphan stateful contract(s) on mainnet without --yes. Review the ORPHAN WARNINGs above, ' +
+            'then re-run with --yes to proceed.',
+        );
+    }
+
+    const { wallet, keyPair } = await loadWallet();
+    const ownerAddress = wallet.address;
+    const ownerPublicKey = loadOwnerPublicKey(keyPair);
+    const balance = await withRateLimit(() => client.getBalance(ownerAddress));
+    console.log(`Operator wallet: ${ownerAddress.toString()}  balance ${(Number(balance) / 1e9).toFixed(3)} TON`);
+    if (balance < toNano('1')) {
+        console.error('ERROR: Wallet balance too low (need at least 1 TON).');
+        process.exit(1);
+    }
+
+    const gmAddress = Address.parse(netData.gameManager.bounceable);
+    const jettonContentUri = process.env.JETTON_CONTENT_URI || JETTON_DEFAULT_URI;
+    const instances = buildRetroInstances(compiled, ownerAddress, ownerPublicKey, options.shipStationId, jettonContentUri);
+
+    // Shared operator send primitive (deploy when stateInit is present, else a message).
+    const send: SwapSend = async (to, value, body, op, stateInit) => {
+        if (stateInit) {
+            await withTimeout(
+                sendTransaction(client, wallet, keyPair, to, value, withRateLimit, body, stateInit),
+                DEPLOYMENT_TIMEOUT,
+                op,
+            );
+            await waitForDeploy(client, to, withRateLimit, 30);
+            console.log(`  · ${op}: deployed`);
+        } else {
+            await sendAndWait(client, wallet, keyPair, to, value, body, op, withRateLimit);
+        }
+    };
+
+    // 1) R* hot-swap (if needed). Establishes the live R* the setters target.
+    let currentRAddress = netData.retranslator ? Address.parse(netData.retranslator.bounceable) : null;
+    if (plan.swap) {
+        if (!currentRAddress) throw new Error('R* swap required but deployment_latest.json has no retranslator address.');
+        const swapCtx: SwapContext = {
+            client, withRateLimit, network, isTestnet,
+            gmAddress, oldRAddress: currentRAddress, retranslatorCode: compiled.retranslatorCode, send,
+        };
+        const swapRes = await runRetranslatorSwap(swapCtx, { dryRun: false });
+        currentRAddress = swapRes.newRAddress;
+    }
+    if (!currentRAddress) throw new Error('No live Retranslator to re-register leaves on; aborting.');
+
+    // 2) Read the CURRENT (post-swap) R* registries so we preserve unchanged slots.
+    const openedR = client.open(Retranslator.createFromAddress(currentRAddress));
+    const curGames = await withRateLimit(() => openedR.getGamesInfo()).catch(() => null);
+    const curToolsCell = await withRateLimit(() => openedR.getToolsInfo()).catch(() => null);
+    const curPrinters = decodeToolsPrinters(curToolsCell);
+
+    // 3) Redeploy each changed leaf + accumulate the registry updates.
+    let gamesDirty = false;
+    const newGames: GamesInfo = curGames
+        ? { ...curGames }
+        : { active_game: instances.game.address, ssm: instances.ssm.address, ton_race_game: instances.game.address, ubps: instances.ubps.address };
+    let toolsDirty = false;
+    // Default unchanged printers to their (deterministic) freshly-compiled address —
+    // identical to the live address when the code didn't change.
+    let nftAddr: Address = curPrinters.nft ?? instances.nftPrinter.address;
+    let sbtAddr: Address = curPrinters.sbt ?? instances.sbtPrinter.address;
+    let jettonDirty = false;
+
+    const wasActive = (oldAddr: string | null): boolean =>
+        !!(oldAddr && curGames?.active_game && curGames.active_game.equals(Address.parse(oldAddr)));
+
+    for (const leaf of plan.leafRedeploys) {
+        const target = leafDeployTarget(leaf.key, instances);
+        const w = orphanWarning(leaf.kind);
+        if (w) console.log(`⚠ ORPHANING (${leaf.key}): ${w}`);
+        const alreadyActive = (await withRateLimit(() => client.getContractState(target.address))).state === 'active';
+        if (alreadyActive) {
+            console.log(`  · ${leaf.key}: already at ${target.address.toString()}; skipping deploy`);
+        } else {
+            await send(target.address, target.value, beginCell().endCell(), `deploy ${leaf.key}`, target.init);
+        }
+
+        switch (leaf.kind) {
+            case 'jettonMinter':
+                jettonDirty = true; break;
+            case 'nftPrinter':
+                nftAddr = instances.nftPrinter.address; toolsDirty = true; break;
+            case 'sbtPrinter':
+                sbtAddr = instances.sbtPrinter.address; toolsDirty = true; break;
+            case 'ton_race_game':
+                newGames.ton_race_game = instances.game.address;
+                if (wasActive(leaf.oldAddr)) newGames.active_game = instances.game.address;
+                gamesDirty = true; break;
+            case 'ssm':
+                newGames.ssm = instances.ssm.address;
+                if (wasActive(leaf.oldAddr)) newGames.active_game = instances.ssm.address;
+                gamesDirty = true; break;
+            case 'ubps':
+                newGames.ubps = instances.ubps.address; gamesDirty = true; break;
+            case 'subcontract':
+            case 'ownerShip':
+                break; // not in any R* registry — redeploy only
+        }
+    }
+
+    // 4) Re-register on the live R* via GM relay (only the registries that changed).
+    const relay = (body: Cell, value: bigint, forward: bigint, op: string) =>
+        send(gmAddress, GAS_COST_REDIRECT_MESSAGE + value, GameManager.redirectMessage(currentRAddress!, body, forward), op);
+
+    if (jettonDirty) {
+        await relay(
+            Retranslator.setJettonInfoMessage({ jettonMinterAddress: instances.jettonMinter.address, jettonWalletCode: compiled.jettonWalletCode }),
+            toNano('0.1'), toNano('0.1'), 'reregister jettonInfo',
+        );
+    }
+    if (gamesDirty) {
+        await relay(Retranslator.setGamesInfoMessage(newGames), toNano('1'), toNano('0.9'), 'reregister gamesInfo');
+    }
+    if (toolsDirty) {
+        await relay(Retranslator.setToolsInfoMessage(buildToolsInfo(nftAddr, sbtAddr)), toNano('0.1'), toNano('0.1'), 'reregister toolsInfo');
+    }
+
+    // 5) Finalize the artifact: refresh contractCodes + write the new leaf addresses.
+    const finalData = readDeploymentData();
+    finalData.timestamp = new Date().toISOString();
+    finalData.constants = buildGameConstants();
+    finalData.contractCodes = buildFullContractCodes(compiled);
+    const finalNet = finalData[network];
+    for (const leaf of plan.leafRedeploys) {
+        setLeafAddress(finalNet, leaf.key, leafDeployTarget(leaf.key, instances).address, isTestnet);
+    }
+    finalNet.status = 'completed';
+    finalNet.deployed = true;
+    writeFullDeploymentData(finalData);
+
+    console.log('\n=== Retro update complete ===');
+    console.log(`Network: ${network}`);
+    if (plan.swap) console.log(`Retranslator (new): ${currentRAddress.toString()}`);
+    for (const leaf of plan.leafRedeploys) {
+        console.log(`${leaf.key}: ${leafDeployTarget(leaf.key, instances).address.toString()}`);
+    }
+    console.log('deployment_info/deployment_latest.json updated.');
+}
+
+async function main(): Promise<void> {
+    const options = parseCliArgs();
+
+    // OFFLINE ABI publish — no RPC, no keys. Independent of mode. Same producer +
+    // shared assembly as a live deploy, with placeholder addresses + deployed:false.
+    if (options.offline) {
+        await runOfflineAbi();
+        return;
+    }
+
+    if (options.mode === 'hard') {
+        await hardRedeploy(options);
+    } else {
+        await retroUpdate(options);
     }
 }
 
