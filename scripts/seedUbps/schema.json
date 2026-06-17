@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/RCrewX/gm_ultimate_ton_smart_contracts/scripts/seedUbps/schema.json",
+  "title": "UBPS Seed Format v1",
+  "description": "Standard input for scripts/seedUbps.ts. Symbolic labels (id) are the cross-reference mechanism; the seeder resolves them to on-chain addresses. BeliefSet indices are master-assigned at creation and are therefore NOT present in the input. A Belief (B) is a BeliefSet with root:true (no separate array). All `text` strings are capped at 127 utf-8 bytes (the on-chain stringId / single-cell limit).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ubpsSeedVersion", "network", "questions", "answers", "beliefSets", "users"],
+  "properties": {
+    "ubpsSeedVersion": { "const": 1 },
+    "network": { "enum": ["testnet", "mainnet"], "description": "Must equal the --network flag. \"mainnet\" is rejected by the seeder for now." },
+    "meta": {
+      "type": "object",
+      "description": "Free-form provenance (optional but recommended).",
+      "additionalProperties": true,
+      "properties": {
+        "description": { "type": "string" },
+        "generatedAt": { "type": "string" },
+        "generator": { "type": "string" },
+        "counts": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "users": { "type": "integer" },
+            "questions": { "type": "integer" },
+            "answers": { "type": "integer" },
+            "beliefSets": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "text"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "description": "Unique within questions[]." },
+          "text": { "type": "string", "minLength": 1, "maxLength": 127, "description": "<=127 utf-8 bytes. questionId = sha256(utf8(text))." }
+        }
+      }
+    },
+    "answers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "question", "text"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "description": "Unique within answers[]." },
+          "question": { "type": "string", "minLength": 1, "description": "An existing questions[].id." },
+          "text": { "type": "string", "minLength": 1, "maxLength": 127, "description": "<=127 utf-8 bytes. answerId = sha256(utf8(text))." }
+        }
+      }
+    },
+    "beliefSets": {
+      "type": "array",
+      "description": "Includes both BS (root:false) and B (root:true). The `sets` graph MUST be acyclic (DAG) so creation can be topologically ordered.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "root", "answers", "sets"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "description": "Unique within beliefSets[]." },
+          "root": { "type": "boolean", "description": "true => final Belief (public profile)." },
+          "answers": {
+            "type": "array",
+            "maxItems": 100,
+            "items": { "type": "string", "description": "An existing answers[].id." },
+            "description": "<= MAX_A (100)."
+          },
+          "sets": {
+            "type": "array",
+            "maxItems": 20,
+            "items": { "type": "string", "description": "An existing beliefSets[].id." },
+            "description": "<= MAX_BS (20). ACYCLIC."
+          }
+        }
+      }
+    },
+    "users": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "walletIndex", "pointer"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "description": "Unique within users[]." },
+          "walletIndex": { "type": "integer", "minimum": 0, "description": "0-based, unique index into the derived test-wallet set." },
+          "pointer": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type"],
+            "properties": {
+              "type": { "enum": ["belief", "unit", "none"] },
+              "ref": {
+                "type": ["string", "null"],
+                "description": "belief => a beliefSets[].id; unit => a users[].id (subscription, cycles allowed); none => null/omitted."
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

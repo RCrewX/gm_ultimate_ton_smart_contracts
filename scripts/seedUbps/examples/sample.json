@@ -1,0 +1,37 @@
+{
+  "ubpsSeedVersion": 1,
+  "network": "testnet",
+  "meta": {
+    "description": "Tiny UBPS seed sample for --dry-run validation (3 users, 2 Q, 2 A, 1 BS, 1 B).",
+    "generatedAt": "2026-06-17T00:00:00Z",
+    "generator": "manual",
+    "counts": { "users": 3, "questions": 2, "answers": 2, "beliefSets": 2 }
+  },
+  "questions": [
+    { "id": "q.happy", "text": "Are you happy?" },
+    { "id": "q.coffee", "text": "Do you drink coffee?" }
+  ],
+  "answers": [
+    { "id": "a.happy.yes", "question": "q.happy", "text": "Yes, very" },
+    { "id": "a.coffee.no", "question": "q.coffee", "text": "No, tea" }
+  ],
+  "beliefSets": [
+    {
+      "id": "bs.core",
+      "root": false,
+      "answers": ["a.happy.yes", "a.coffee.no"],
+      "sets": []
+    },
+    {
+      "id": "b.profile",
+      "root": true,
+      "answers": ["a.happy.yes"],
+      "sets": ["bs.core"]
+    }
+  ],
+  "users": [
+    { "id": "u.alice", "walletIndex": 0, "pointer": { "type": "belief", "ref": "b.profile" } },
+    { "id": "u.bob", "walletIndex": 1, "pointer": { "type": "unit", "ref": "u.alice" } },
+    { "id": "u.carol", "walletIndex": 2, "pointer": { "type": "none" } }
+  ]
+}

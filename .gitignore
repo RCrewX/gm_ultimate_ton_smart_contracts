@@ -35,3 +35,7 @@ prompt*
 # Local SSM scratch note + private encryption note (untracked by request)
 contracts/soulless_slot_machine/new_ssm.md
 note_encrypt_multisplav.txt
+
+# UBPS seeder: manifests (also covered by deployment_info/) + any local seed material
+*.manifest.json
+scripts/seedUbps/**/*.local.json
