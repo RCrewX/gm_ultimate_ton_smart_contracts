@@ -62,7 +62,7 @@ export type ToolsInfo = {
     feeDenominator: number;
     feeCollector: Address | null;
     nftPrinterAddress: Address | null;
-    sbtPrinterAddress: Address | null;
+    passportPrinterAddress: Address | null;
     extra: Cell | null;
 };
 
@@ -166,7 +166,7 @@ export function encodeToolsInfo(info: ToolsInfo): Cell {
         .storeUint(info.feeDenominator, 16)
         .storeAddress(info.feeCollector)
         .storeAddress(info.nftPrinterAddress)
-        .storeAddress(info.sbtPrinterAddress)
+        .storeAddress(info.passportPrinterAddress)
         .storeMaybeRef(info.extra)
         .endCell();
 }

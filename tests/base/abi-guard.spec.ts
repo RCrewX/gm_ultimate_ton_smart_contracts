@@ -45,8 +45,8 @@ describe('ABI guard (deployment_latest.json vs on-chain)', () => {
         abi = loadAbi();
     }, 120000);
 
-    it('schema version is current (v5)', () => {
-        expect(abi.constants.schemaVersion).toBe(5);
+    it('schema version is current (v9)', () => {
+        expect(abi.constants.schemaVersion).toBe(9);
         // `deployed` is deploy-STATE, not ABI schema: it is legitimately `true` after a
         // real testnet deploy and `false` on an offline `pnpm abi` publish. deployment_info/
         // is gitignored (a local artifact), so this guard — which is about ABI/on-chain drift —
@@ -148,8 +148,8 @@ describe('contractCodes clobber defense (mergeContractCodes)', () => {
             soulless_slot_machine: { soullessSlotMachine: ci('ssm'), ssmSlot: ci('slot') },
         },
         sbtCollection: ci('sbtc'), sbtItem: ci('sbti'), sbtnCollection: ci('sbtnc'), sbtnItem: ci('sbtni'),
-        nftItem: ci('nfti'), nftPrinterItem: ci('npi'), sbtPrinterItem: ci('spi'),
-        nftPrinter: ci('np'), sbtPrinter: ci('sp'),
+        nftItem: ci('nfti'), nftPrinterItem: ci('npi'), passportPrinterItem: ci('spi'),
+        nftPrinter: ci('np'), passportPrinter: ci('sp'),
     };
 
     // The OLD deploySystem bug shape: a code set that forgot the code-only entries.
@@ -160,8 +160,8 @@ describe('contractCodes clobber defense (mergeContractCodes)', () => {
             soulless_slot_machine: { soullessSlotMachine: ci('ssm2') }, // ssmSlot OMITTED
         },
         sbtCollection: ci('sbtc'), sbtItem: ci('sbti'), sbtnCollection: ci('sbtnc'), sbtnItem: ci('sbtni'),
-        nftItem: ci('nfti'), nftPrinterItem: ci('npi'), sbtPrinterItem: ci('spi'),
-        nftPrinter: ci('np'), sbtPrinter: ci('sp'),
+        nftItem: ci('nfti'), nftPrinterItem: ci('npi'), passportPrinterItem: ci('spi'),
+        nftPrinter: ci('np'), passportPrinter: ci('sp'),
     };
 
     it('a partial write cannot strip the code-only ssmSlot entry (footgun closed)', () => {

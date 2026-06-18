@@ -47,7 +47,7 @@ const ERR_RETRANSLATOR_INACTIVE = 931;  // Retranslator kill-switch is engaged (
 const ERR_INVALID_RETRANSLATOR_SENDER = 932;  // Sender is not the configured retranslator address
 const ERR_TOOLS_INFO_NOT_SET = 933;  // ToolsInfo registry is not set (null) on R*
 const ERR_NFT_PRINTER_NOT_SET = 934;  // ToolsInfo.nftPrinterAddress is null
-const ERR_SBT_PRINTER_NOT_SET = 935;  // ToolsInfo.sbtPrinterAddress is null
+const ERR_PASSPORT_PRINTER_NOT_SET = 935;  // ToolsInfo.passportPrinterAddress is null
 
 const SEND_MODE_CARRY_ALL_REMAINING_BALANCE: uint8 = 128;
 

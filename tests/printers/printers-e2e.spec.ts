@@ -8,19 +8,21 @@ import { GAS_COST_REDIRECT_MESSAGE } from '../../wrappers/game_manager/types';
 import { Retranslator } from '../../wrappers/game_manager/Retranslator';
 import { ROpcodes } from '../../wrappers/game_manager/RetranslatorTypes';
 import { NFTPrinter, NFTPrinterOp } from '../../wrappers/printers/nft_printer/NFTPrinter';
-import { SBTPrinter, SBTPrinterOp } from '../../wrappers/printers/sbt_printer/SBTPrinter';
+import {
+    UniversalBlockchainPassportPrinter,
+    UniversalBlockchainPassport,
+    PassportOp,
+    buildCoreContent,
+    buildCoreSystemUpdate,
+} from '../../wrappers/printers/universal_passport/UniversalBlockchainPassportPrinter';
 import { NFTItem } from '../../wrappers/tep/nft/NFTItem';
-import { SBTNItem } from '../../wrappers/tep/sbtn/SBTNItem';
 import {
     encodeNftContent,
     decodeNftContent,
-    encodeSbtContent,
-    decodeSbtContent,
-    snakeString,
 } from '../../wrappers/game_manager/RetranslatorTypes';
 
 // =============================================================================
-// NFTPrinter + SBTPrinter e2e through the GM/R* pipe.
+// NFTPrinter + UniversalBlockchainPassportPrinter e2e through the GM/R* pipe.
 //   R1{recipe} -> GM -R2-> R* (validate recipe + assign index) -R3-> GM -R4->
 //   printer (sender == admin == GM) -> item.
 // Plus the recipe-auth and authority gates.
@@ -30,9 +32,9 @@ const R3_OP = 0x52330003;
 
 type PrinterSystem = ContractSystem & {
     nftPrinter: SandboxContract<NFTPrinter>;
-    sbtPrinter: SandboxContract<SBTPrinter>;
+    passportPrinter: SandboxContract<UniversalBlockchainPassportPrinter>;
     nftItemCode: Cell;
-    sbtnItemCode: Cell;
+    passportItemCode: Cell;
 };
 
 describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
@@ -44,9 +46,9 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
         // The printers use their own editable item variants (standard item +
         // collection-gated SetContent edit handler; storage layout identical).
         const nftItemCode = await compile('NFTPrinterItem');
-        const sbtnItemCode = await compile('SBTPrinterItem');
+        const passportItemCode = await compile('UniversalBlockchainPassport');
         const nftCollectionCode = await compile('NFTPrinter');
-        const sbtCollectionCode = await compile('SBTPrinter');
+        const sbtCollectionCode = await compile('UniversalBlockchainPassportPrinter');
 
         // Deploy the two printer collections with adminAddress = GameManager.
         const nftPrinter = base.blockchain.openContract(
@@ -61,16 +63,16 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
         );
         let r = await nftPrinter.sendDeploy(base.ownerAccount.getSender(), toNano('0.5'));
 
-        const sbtPrinter = base.blockchain.openContract(
-            SBTPrinter.createFromConfig(
+        const passportPrinter = base.blockchain.openContract(
+            UniversalBlockchainPassportPrinter.createFromConfig(
                 {
-                    sbtnItemCode,
+                    passportItemCode,
                     adminAddress: base.gameManager.address,
                 },
                 sbtCollectionCode,
             ),
         );
-        await sbtPrinter.sendDeploy(base.ownerAccount.getSender(), toNano('0.5'));
+        await passportPrinter.sendDeploy(base.ownerAccount.getSender(), toNano('0.5'));
 
         // Push the printer addresses into R*.toolsInfo via GM RedirectMessage -> SetToolsInfo.
         await base.gameManager.sendRedirectMessage(
@@ -82,13 +84,13 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
                 feeDenominator: 1,
                 feeCollector: null,
                 nftPrinterAddress: nftPrinter.address,
-                sbtPrinterAddress: sbtPrinter.address,
+                passportPrinterAddress: passportPrinter.address,
                 extra: null,
             }),
             toNano('0.2'),
         );
 
-        S = Object.assign(base, { nftPrinter, sbtPrinter, nftItemCode, sbtnItemCode });
+        S = Object.assign(base, { nftPrinter, passportPrinter, nftItemCode, passportItemCode });
     }, 100000);
 
     afterEach(() => {
@@ -110,7 +112,7 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
         const nftAddr = s.loadAddress();
         const sbtAddr = s.loadAddress();
         expect(nftAddr).toEqualAddress(S.nftPrinter.address);
-        expect(sbtAddr).toEqualAddress(S.sbtPrinter.address);
+        expect(sbtAddr).toEqualAddress(S.passportPrinter.address);
     });
 
     it('mint NFT (owner initiator): R1->R4 deploys an item to the receiver', async () => {
@@ -167,7 +169,7 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
 
     it('mint SBT (owner initiator): deploys a soulbound item to the receiver', async () => {
         const receiver = await S.blockchain.treasury('sbtReceiver');
-        const content = encodeSbtContent({ tatoo: snakeString('dragon-tattoo') });
+        const content = buildCoreContent(42, 'dragon'); // id=0 CORE: reputation + nickname
 
         expect(await S.retranslator.getNextSbtIndex()).toBe(0n);
 
@@ -180,27 +182,29 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
 
         expect(S.messageResult.transactions).toHaveTransaction({
             from: S.gameManager.address,
-            to: S.sbtPrinter.address,
+            to: S.passportPrinter.address,
             success: true,
-            op: SBTPrinterOp.DeploySbtn,
+            op: PassportOp.PassportDeploy,
         });
         expect(await S.retranslator.getNextSbtIndex()).toBe(1n);
 
-        const itemAddr = await S.sbtPrinter.getSbtnAddress(receiver.address, 0);
+        const itemAddr = await S.passportPrinter.getPassportAddress(receiver.address, 0);
         expect(S.messageResult.transactions).toHaveTransaction({
-            from: S.sbtPrinter.address,
+            from: S.passportPrinter.address,
             to: itemAddr,
             success: true,
             deploy: true,
         });
-        const item = S.blockchain.openContract(SBTNItem.createFromAddress(itemAddr));
+        const item = S.blockchain.openContract(UniversalBlockchainPassport.createFromAddress(itemAddr));
         const data = await item.getNftData();
-        expect(data.init).toBe(true);
+        expect(data.isInitialized).toBe(true);
         expect(data.ownerAddress).toEqualAddress(receiver.address);
         expect(data.revokedAt).toBe(0n);
-        // Structured SBTContent {tatoo} round-trips through the soulbound item.
-        const sbtContent = decodeSbtContent(data.individualContent!);
-        expect(sbtContent.tatoo.beginParse().loadStringTail()).toBe('dragon-tattoo');
+        // Typed per-id CORE content {reputation, nickname} round-trips through the item.
+        const core = await item.getPassportCore();
+        expect(core.reputation).toBe(42n);
+        expect(core.nickname).toBe('dragon');
+        expect(await item.getReputation()).toBe(42n);
     });
 
     it('mint NFT (registered active game initiator) is allowed', async () => {
@@ -254,7 +258,7 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
         );
 
         const receiver = await S.blockchain.treasury('sbtGameReceiver');
-        const content = encodeSbtContent({ tatoo: snakeString('forbidden') });
+        const content = buildCoreContent(0, 'forbidden');
         S.messageResult = await S.gameManager.sendMintSbt(
             gameTreasury.getSender(),
             toNano('1'),
@@ -273,11 +277,11 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
 
     it('revoke SBT (owner): R* forwards revoke; item is revoked', async () => {
         const receiver = await S.blockchain.treasury('sbtToRevoke');
-        const content = encodeSbtContent({ tatoo: snakeString('to-revoke') });
+        const content = buildCoreContent(0, 'to-revoke');
         await S.gameManager.sendMintSbt(S.ownerAccount.getSender(), toNano('1'), receiver.address, content);
 
-        const itemAddr = await S.sbtPrinter.getSbtnAddress(receiver.address, 0);
-        const item = S.blockchain.openContract(SBTNItem.createFromAddress(itemAddr));
+        const itemAddr = await S.passportPrinter.getPassportAddress(receiver.address, 0);
+        const item = S.blockchain.openContract(UniversalBlockchainPassport.createFromAddress(itemAddr));
         expect((await item.getNftData()).revokedAt).toBe(0n);
 
         S.messageResult = await S.gameManager.sendRevokeSbt(
@@ -287,12 +291,12 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
         );
         expect(S.messageResult.transactions).toHaveTransaction({
             from: S.gameManager.address,
-            to: S.sbtPrinter.address,
+            to: S.passportPrinter.address,
             success: true,
-            op: SBTPrinterOp.RevokeSbtnItem,
+            op: PassportOp.RevokePassportItem,
         });
         expect(S.messageResult.transactions).toHaveTransaction({
-            from: S.sbtPrinter.address,
+            from: S.passportPrinter.address,
             to: itemAddr,
             success: true,
         });
@@ -375,10 +379,10 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
         });
     });
 
-    it('a direct DeploySbtn not from GM is rejected by the SBTPrinter', async () => {
+    it('a direct DeploySbtn not from GM is rejected by the UniversalBlockchainPassportPrinter', async () => {
         const stranger = await S.blockchain.treasury('strangerSbt');
         const receiver = await S.blockchain.treasury('directSbtReceiver');
-        S.messageResult = await S.sbtPrinter.sendDeploySbtn(stranger.getSender(), {
+        S.messageResult = await S.passportPrinter.sendPassportDeploy(stranger.getSender(), {
             ownerAddress: receiver.address,
             index: 0,
             value: toNano('0.3'),
@@ -386,7 +390,7 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
         });
         expect(S.messageResult.transactions).toHaveTransaction({
             from: stranger.address,
-            to: S.sbtPrinter.address,
+            to: S.passportPrinter.address,
             success: false,
             exitCode: 968, // ERROR_NOT_FROM_ADMIN (tep/sbtn)
         });
@@ -434,11 +438,11 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
 
     it('ANVIL: owner edits an SBT item content end-to-end', async () => {
         const receiver = await S.blockchain.treasury('sbtEditRcv');
-        const content = encodeSbtContent({ tatoo: snakeString('old-ink') });
+        const content = buildCoreContent(1, 'keep-me'); // reputation 1 (system) + nickname (owner)
         await S.gameManager.sendMintSbt(S.ownerAccount.getSender(), toNano('1'), receiver.address, content);
-        const itemAddr = await S.sbtPrinter.getSbtnAddress(receiver.address, 0);
+        const itemAddr = await S.passportPrinter.getPassportAddress(receiver.address, 0);
 
-        const newContent = encodeSbtContent({ tatoo: snakeString('new-ink') });
+        const newContent = buildCoreSystemUpdate(7); // SYSTEM edit: set reputation=7 (merge keeps nickname)
         S.messageResult = await S.gameManager.sendEditSbt(
             S.ownerAccount.getSender(),
             toNano('0.5'),
@@ -448,19 +452,21 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
 
         expect(S.messageResult.transactions).toHaveTransaction({
             from: S.gameManager.address,
-            to: S.sbtPrinter.address,
+            to: S.passportPrinter.address,
             success: true,
-            op: SBTPrinterOp.EditSbtItem,
+            op: PassportOp.EditPassportItem,
         });
         expect(S.messageResult.transactions).toHaveTransaction({
-            from: S.sbtPrinter.address,
+            from: S.passportPrinter.address,
             to: itemAddr,
             success: true,
-            op: SBTPrinterOp.SetSbtContent,
+            op: PassportOp.SetPassportSystemContent,
         });
-        const item = S.blockchain.openContract(SBTNItem.createFromAddress(itemAddr));
-        const parsed = decodeSbtContent((await item.getNftData()).individualContent!);
-        expect(parsed.tatoo.beginParse().loadStringTail()).toBe('new-ink');
+        const item = S.blockchain.openContract(UniversalBlockchainPassport.createFromAddress(itemAddr));
+        // SYSTEM edit updated reputation; the owner's nickname is PRESERVED (per-field merge).
+        const core = await item.getPassportCore();
+        expect(core.reputation).toBe(7n);
+        expect(core.nickname).toBe('keep-me');
     });
 
     it('ANVIL: edit by a non-owner is rejected by R*', async () => {

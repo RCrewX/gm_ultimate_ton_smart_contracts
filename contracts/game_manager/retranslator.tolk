@@ -157,7 +157,7 @@ struct ToolsInfo {
     feeDenominator: uint16      // denominator (>= 1)
     feeCollector: address?      // null BY DEFAULT (no fee routing)
     nftPrinterAddress: address? // future NFT printer
-    sbtPrinterAddress: address? // future SBT printer
+    passportPrinterAddress: address? // passport printer (UniversalBlockchainPassportPrinter)
     extra: cell?                // open-ended; add fields here without changing the head
 }
 
@@ -197,9 +197,9 @@ struct (0x595f07bc) AskToBurn {
 // These MUST stay byte-compatible with the printer collection message structs:
 //   PrinterDeployNft        <-> contracts/printers/nft_printer/messages.tolk DeployNft
 //   PrinterNftItemInit      <-> nft_printer NftItemInitAtDeployment (opcode-less payload)
-//   PrinterDeploySbtn       <-> contracts/printers/sbt_printer/messages.tolk DeploySbtn
-//   PrinterRevokeSbtnItem   <-> sbt_printer RevokeSbtnItem
-// DeployNft and DeploySbtn share opcode 0x00000001 but target DIFFERENT printers,
+//   PrinterPassportDeploy       <-> contracts/printers/universal_passport/messages.tolk PassportDeploy
+//   PrinterRevokePassportItem   <-> universal_passport RevokePassportItem
+// DeployNft and PassportDeploy share opcode 0x00000001 but target DIFFERENT printers,
 // so there is no ambiguity (these are build-only; never parsed in a union).
 
 struct PrinterNftItemInit {
@@ -214,7 +214,7 @@ struct (0x00000001) PrinterDeployNft {
     initParams: Cell<PrinterNftItemInit>
 }
 
-struct (0x00000001) PrinterDeploySbtn {
+struct (0x00000001) PrinterPassportDeploy {
     queryId: uint64
     ownerAddress: address
     index: uint256
@@ -222,7 +222,7 @@ struct (0x00000001) PrinterDeploySbtn {
     individualContent: cell
 }
 
-struct (0x00000004) PrinterRevokeSbtnItem {
+struct (0x00000004) PrinterRevokePassportItem {
     queryId: uint64
     itemAddress: address
 }
@@ -293,7 +293,7 @@ struct (0x52766b73) RevokeSbt {          // "Rvks"
 //  Wire match: EditNft.content / EditSbt.content are forwarded verbatim into the
 //  printer EditItem bodies below, whose opcodes mirror the printer collections:
 //    PrinterEditNftItem (0x00000006) <-> nft_printer/messages.tolk EditNftItem
-//    PrinterEditSbtItem (0x00000007) <-> sbt_printer/messages.tolk EditSbtItem
+//    PrinterEditPassportItem (0x00000007) <-> universal_passport/messages.tolk EditPassportItem
 // =============================================================================
 
 // ---- ANVIL inbound recipe requests (wrapped in R1.data -> R2.data) ----
@@ -314,7 +314,7 @@ struct (0x00000006) PrinterEditNftItem {
     newContent: cell
 }
 
-struct (0x00000007) PrinterEditSbtItem {
+struct (0x00000007) PrinterEditPassportItem {
     queryId: uint64
     itemAddress: address
     newContent: cell
@@ -923,17 +923,17 @@ fun onInternalMessage(in: InMessage) {
                     emitR3(storage.gameManagerAddress, toolsInfo.nftPrinterAddress!, deployNft.toCell());
                 }
 
-                // Mint one soulbound SBT to `receiver` via the SBTPrinter.
+                // Mint one soulbound SBT to `receiver` via the UniversalBlockchainPassportPrinter.
                 // Recipe policy v1: OWNER/GM ONLY (games may create NFTs, NOT SBTs).
                 // Global nextSbtIndex guarantees per-owner item uniqueness.
                 MintSbt => {
                     assert (msg.initiator == storage.ownerAddress) throw ERR_INVALID_OWNER_SENDER;
                     assert (storage.toolsInfo != null) throw ERR_TOOLS_INFO_NOT_SET;
                     val toolsInfo = storage.toolsInfo!.load();
-                    assert (toolsInfo.sbtPrinterAddress != null) throw ERR_SBT_PRINTER_NOT_SET;
+                    assert (toolsInfo.passportPrinterAddress != null) throw ERR_PASSPORT_PRINTER_NOT_SET;
 
                     val index = storage.nextSbtIndex;
-                    val deploySbtn = PrinterDeploySbtn {
+                    val deployPassport = PrinterPassportDeploy {
                         queryId: 0,
                         ownerAddress: request.receiver,
                         index: index,
@@ -943,24 +943,24 @@ fun onInternalMessage(in: InMessage) {
                     storage.nextSbtIndex = index + 1;
                     storage.save();
                     reserveValue(in.valueCoins);
-                    emitR3(storage.gameManagerAddress, toolsInfo.sbtPrinterAddress!, deploySbtn.toCell());
+                    emitR3(storage.gameManagerAddress, toolsInfo.passportPrinterAddress!, deployPassport.toCell());
                 }
 
                 // Revoke an SBT item. OWNER-ONLY (high-value). The owner supplies the
-                // item address; R* tells GM to emit RevokeSbtnItem to the SBTPrinter,
+                // item address; R* tells GM to emit RevokePassportItem to the passport printer,
                 // which forwards Revoke to the item (item checks sender == collection).
                 RevokeSbt => {
                     assert (msg.initiator == storage.ownerAddress) throw ERR_INVALID_OWNER_SENDER;
                     assert (storage.toolsInfo != null) throw ERR_TOOLS_INFO_NOT_SET;
                     val toolsInfo = storage.toolsInfo!.load();
-                    assert (toolsInfo.sbtPrinterAddress != null) throw ERR_SBT_PRINTER_NOT_SET;
+                    assert (toolsInfo.passportPrinterAddress != null) throw ERR_PASSPORT_PRINTER_NOT_SET;
 
-                    val revokeItem = PrinterRevokeSbtnItem {
+                    val revokeItem = PrinterRevokePassportItem {
                         queryId: request.queryId,
                         itemAddress: request.itemAddress,
                     };
                     reserveValue(in.valueCoins);
-                    emitR3(storage.gameManagerAddress, toolsInfo.sbtPrinterAddress!, revokeItem.toCell());
+                    emitR3(storage.gameManagerAddress, toolsInfo.passportPrinterAddress!, revokeItem.toCell());
                 }
 
                 // ----------------------------------------------------------------
@@ -989,15 +989,15 @@ fun onInternalMessage(in: InMessage) {
                     assert (msg.initiator == storage.ownerAddress) throw ERR_INVALID_OWNER_SENDER;
                     assert (storage.toolsInfo != null) throw ERR_TOOLS_INFO_NOT_SET;
                     val toolsInfo = storage.toolsInfo!.load();
-                    assert (toolsInfo.sbtPrinterAddress != null) throw ERR_SBT_PRINTER_NOT_SET;
+                    assert (toolsInfo.passportPrinterAddress != null) throw ERR_PASSPORT_PRINTER_NOT_SET;
 
-                    val editItem = PrinterEditSbtItem {
+                    val editItem = PrinterEditPassportItem {
                         queryId: 0,
                         itemAddress: request.itemAddress,
                         newContent: request.content,
                     };
                     reserveValue(in.valueCoins);
-                    emitR3(storage.gameManagerAddress, toolsInfo.sbtPrinterAddress!, editItem.toCell());
+                    emitR3(storage.gameManagerAddress, toolsInfo.passportPrinterAddress!, editItem.toCell());
                 }
 
                 // ----------------------------------------------------------------

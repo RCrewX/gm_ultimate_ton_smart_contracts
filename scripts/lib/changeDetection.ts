@@ -48,7 +48,7 @@ const DETECT_TABLE: DetectEntry[] = [
     { key: 'retranslator', role: 'rstar', codeOf: (c) => c.retranslatorCode, addrOf: (n) => n.retranslator?.bounceable },
     { key: 'jettonMinter', role: 'leaf', kind: 'jettonMinter', codeOf: (c) => c.jettonMinterCode, addrOf: (n) => n.jettonMinter?.bounceable },
     { key: 'nftPrinter', role: 'leaf', kind: 'nftPrinter', codeOf: (c) => c.nftPrinterCode, addrOf: (n) => n.nftPrinter?.bounceable },
-    { key: 'sbtPrinter', role: 'leaf', kind: 'sbtPrinter', codeOf: (c) => c.sbtPrinterCode, addrOf: (n) => n.sbtPrinter?.bounceable },
+    { key: 'passportPrinter', role: 'leaf', kind: 'passportPrinter', codeOf: (c) => c.passportPrinterCode, addrOf: (n) => n.passportPrinter?.bounceable },
     { key: 'games.ton_race_game.game', role: 'leaf', kind: 'ton_race_game', codeOf: (c) => c.gameCode, addrOf: (n) => n.games?.ton_race_game?.game?.bounceable },
     { key: 'games.soulless_slot_machine.ssm', role: 'leaf', kind: 'ssm', codeOf: (c) => c.ssmCode, addrOf: (n) => n.games?.soulless_slot_machine?.ssm?.bounceable },
     { key: 'games.ubps.ubps', role: 'leaf', kind: 'ubps', codeOf: (c) => c.ubpsCode, addrOf: (n) => n.games?.ubps?.ubps?.bounceable },

@@ -160,7 +160,7 @@ describe('orphanWarning', () => {
         expect(orphanWarning('ton_race_game')).toMatch(/ships/i);
         expect(orphanWarning('jettonMinter')).toMatch(/RUDA/);
         expect(orphanWarning('nftPrinter')).toMatch(/NFT/);
-        expect(orphanWarning('sbtPrinter')).toMatch(/SBT/);
+        expect(orphanWarning('passportPrinter')).toMatch(/passport/i);
         expect(orphanWarning('ubps')).toMatch(/Units/);
     });
 

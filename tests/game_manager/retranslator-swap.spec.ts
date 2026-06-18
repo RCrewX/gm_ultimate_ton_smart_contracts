@@ -7,16 +7,14 @@ import { ContractSystem, initContractSystem, cleanupContractSystem } from '../te
 import { Retranslator } from '../../wrappers/game_manager/Retranslator';
 import {
     encodeNftContent,
-    encodeSbtContent,
     encodeSetJettonInfo,
     encodeSetGamesInfo,
     encodeSetToolsInfo,
     encodeSetAllowBurn,
-    snakeString,
 } from '../../wrappers/game_manager/RetranslatorTypes';
 import { Opcodes as GMOpcodes } from '../../wrappers/game_manager/types';
 import { NFTPrinter, NFTPrinterOp } from '../../wrappers/printers/nft_printer/NFTPrinter';
-import { SBTPrinter } from '../../wrappers/printers/sbt_printer/SBTPrinter';
+import { UniversalBlockchainPassportPrinter, buildCoreContent } from '../../wrappers/printers/universal_passport/UniversalBlockchainPassportPrinter';
 
 // =============================================================================
 // Retranslator (R*) HOT-SWAP — prove the swappable-brain promise: deploy R* vN+1
@@ -30,7 +28,7 @@ const ERR_INVALID_RETRANSLATOR_SENDER = 932;
 
 type PrinterSystem = ContractSystem & {
     nftPrinter: SandboxContract<NFTPrinter>;
-    sbtPrinter: SandboxContract<SBTPrinter>;
+    passportPrinter: SandboxContract<UniversalBlockchainPassportPrinter>;
 };
 
 describe('Retranslator R* hot-swap (no GM redeploy)', () => {
@@ -42,9 +40,9 @@ describe('Retranslator R* hot-swap (no GM redeploy)', () => {
         retranslatorCode = base.retranslatorCode;
 
         const nftItemCode = await compile('NFTPrinterItem');
-        const sbtnItemCode = await compile('SBTPrinterItem');
+        const passportItemCode = await compile('UniversalBlockchainPassport');
         const nftCollectionCode = await compile('NFTPrinter');
-        const sbtCollectionCode = await compile('SBTPrinter');
+        const sbtCollectionCode = await compile('UniversalBlockchainPassportPrinter');
 
         const nftPrinter = base.blockchain.openContract(
             NFTPrinter.createFromConfig(
@@ -58,10 +56,10 @@ describe('Retranslator R* hot-swap (no GM redeploy)', () => {
         );
         await nftPrinter.sendDeploy(base.ownerAccount.getSender(), toNano('0.5'));
 
-        const sbtPrinter = base.blockchain.openContract(
-            SBTPrinter.createFromConfig({ sbtnItemCode, adminAddress: base.gameManager.address }, sbtCollectionCode),
+        const passportPrinter = base.blockchain.openContract(
+            UniversalBlockchainPassportPrinter.createFromConfig({ passportItemCode, adminAddress: base.gameManager.address }, sbtCollectionCode),
         );
-        await sbtPrinter.sendDeploy(base.ownerAccount.getSender(), toNano('0.5'));
+        await passportPrinter.sendDeploy(base.ownerAccount.getSender(), toNano('0.5'));
 
         // Seed printer addresses into R*.toolsInfo (GM relay -> SetToolsInfo).
         await base.gameManager.sendRedirectMessage(
@@ -73,13 +71,13 @@ describe('Retranslator R* hot-swap (no GM redeploy)', () => {
                 feeDenominator: 1,
                 feeCollector: null,
                 nftPrinterAddress: nftPrinter.address,
-                sbtPrinterAddress: sbtPrinter.address,
+                passportPrinterAddress: passportPrinter.address,
                 extra: null,
             }),
             toNano('0.2'),
         );
 
-        S = Object.assign(base, { nftPrinter, sbtPrinter });
+        S = Object.assign(base, { nftPrinter, passportPrinter });
     }, 120000);
 
     afterEach(() => {
@@ -100,7 +98,7 @@ describe('Retranslator R* hot-swap (no GM redeploy)', () => {
             S.ownerAccount.getSender(),
             toNano('1'),
             receiver,
-            encodeSbtContent({ tatoo: snakeString('ink') }),
+            buildCoreContent(0, 'ink'),
         );
     }
 

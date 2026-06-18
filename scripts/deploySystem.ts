@@ -34,7 +34,7 @@ import { JettonMinter, jettonContentToCell } from '../wrappers/tep/jetton/Jetton
 import { JettonWallet } from '../wrappers/tep/jetton/JettonWallet';
 import { Subcontract } from '../wrappers/subcontract/Subcontract';
 import { NFTPrinter } from '../wrappers/printers/nft_printer/NFTPrinter';
-import { SBTPrinter } from '../wrappers/printers/sbt_printer/SBTPrinter';
+import { UniversalBlockchainPassportPrinter } from '../wrappers/printers/universal_passport/UniversalBlockchainPassportPrinter';
 import { ToolsInfo, GamesInfo } from '../wrappers/game_manager/RetranslatorTypes';
 import { GAS_COST_REDIRECT_MESSAGE, GAS_COST_SET_RETRANSLATOR } from '../wrappers/game_manager/types';
 import { GAS_COST_MANUAL_DEPLOY } from '../wrappers/subcontract/types';
@@ -538,7 +538,7 @@ async function sendAndWait(
 
 // ============================================================================
 // Printers (GM-owned, R*-governed collections). admin == GameManager; they use
-// their own editable item variants (NFTPrinterItem / SBTPrinterItem = standard
+// their own editable item variants (NFTPrinterItem / UniversalBlockchainPassport item = standard
 // item + a collection-gated SetContent handler) as their item code.
 // ============================================================================
 
@@ -546,13 +546,13 @@ async function sendAndWait(
 // assembly), imported above and reused by both the live deploy and the offline producer.
 
 // v1 toolsInfo carries ONLY the printer addresses (fees stay off).
-function buildToolsInfo(nftPrinter: Address, sbtPrinter: Address): ToolsInfo {
+function buildToolsInfo(nftPrinter: Address, passportPrinter: Address): ToolsInfo {
     return {
         feeNumerator: 0,
         feeDenominator: 1,
         feeCollector: null,
         nftPrinterAddress: nftPrinter,
-        sbtPrinterAddress: sbtPrinter,
+        passportPrinterAddress: passportPrinter,
         extra: null,
     };
 }
@@ -677,7 +677,7 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
             gameManagerCode, retranslatorCode, gameCode, shipCode, coordinateCellCode,
             ssmCode, ssmSlotCode, jettonWalletCode, jettonMinterCode, subcontractCode,
             sbtItemCode, sbtCollectionCode, sbtnItemCode, sbtnCollectionCode, nftItemCode,
-            nftPrinterItemCode, sbtPrinterItemCode, nftPrinterCode, sbtPrinterCode,
+            nftPrinterItemCode, passportPrinterItemCode, nftPrinterCode, passportPrinterCode,
             ubpsCode, ubpsUnitCode, ubpsQuestionCode, ubpsAnswerCode, ubpsBeliefSetCode,
         } = compiled;
         console.log('Contracts compiled successfully');
@@ -695,14 +695,14 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
         const testnetAddresses = calculateNetworkAddresses(
             ownerAddress, gameManagerCode, retranslatorCode, gameCode, shipCode, coordinateCellCode,
             ssmCode, ssmSlotCode, jettonMinterCode, jettonWalletCode, subcontractCode,
-            nftPrinterCode, sbtPrinterCode, nftPrinterItemCode, sbtPrinterItemCode,
+            nftPrinterCode, passportPrinterCode, nftPrinterItemCode, passportPrinterItemCode,
             true, shipStationId, ownerPublicKey, jettonContentUri,
             ubpsCode, ubpsUnitCode, ubpsQuestionCode, ubpsAnswerCode, ubpsBeliefSetCode
         );
         const mainnetAddresses = calculateNetworkAddresses(
             ownerAddress, gameManagerCode, retranslatorCode, gameCode, shipCode, coordinateCellCode,
             ssmCode, ssmSlotCode, jettonMinterCode, jettonWalletCode, subcontractCode,
-            nftPrinterCode, sbtPrinterCode, nftPrinterItemCode, sbtPrinterItemCode,
+            nftPrinterCode, passportPrinterCode, nftPrinterItemCode, passportPrinterItemCode,
             false, shipStationId, ownerPublicKey, jettonContentUri,
             ubpsCode, ubpsUnitCode, ubpsQuestionCode, ubpsAnswerCode, ubpsBeliefSetCode
         );
@@ -778,8 +778,8 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
             id: shipStationId,
             ownerPublicKey,
         }, subcontractCode);
-        const { nftPrinter, sbtPrinter } = createPrinters(
-            ownerAddress, gameManager.address, nftPrinterCode, sbtPrinterCode, nftPrinterItemCode, sbtPrinterItemCode,
+        const { nftPrinter, passportPrinter } = createPrinters(
+            ownerAddress, gameManager.address, nftPrinterCode, passportPrinterCode, nftPrinterItemCode, passportPrinterItemCode,
         );
 
         // ================================================================
@@ -889,15 +889,15 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
         console.log('NFTPrinter:', nftPrinter.address.toString());
         writeFullDeploymentData(deploymentData);
 
-        // 5c. Deploy SBTPrinter (GM-owned, soulbound/revocable collection).
+        // 5c. Deploy UniversalBlockchainPassportPrinter (GM-owned, soulbound/revocable collection).
         await checkAndDeploy(
             client, wallet, keyPair,
-            sbtPrinter.address, 'SBTPrinter',
+            passportPrinter.address, 'UniversalBlockchainPassportPrinter',
             toNano('0.2'),
-            { code: sbtPrinterCode, data: sbtPrinter.init!.data },
+            { code: passportPrinterCode, data: passportPrinter.init!.data },
             withRateLimit
         );
-        console.log('SBTPrinter:', sbtPrinter.address.toString());
+        console.log('UniversalBlockchainPassportPrinter:', passportPrinter.address.toString());
         writeFullDeploymentData(deploymentData);
 
         // 6. Configure Retranslator: jetton info (minter address + wallet code),
@@ -962,7 +962,7 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
         const existingPrinters = decodeToolsPrinters(existingTools);
         const printersWired =
             existingPrinters.nft?.equals(nftPrinter.address) &&
-            existingPrinters.sbt?.equals(sbtPrinter.address);
+            existingPrinters.sbt?.equals(passportPrinter.address);
 
         if (!printersWired) {
             await sendAndWait(
@@ -972,7 +972,7 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
                 GameManager.redirectMessage(
                     retranslator.address,
                     Retranslator.setToolsInfoMessage(
-                        buildToolsInfo(nftPrinter.address, sbtPrinter.address),
+                        buildToolsInfo(nftPrinter.address, passportPrinter.address),
                     ),
                     toNano('0.1'),
                 ),
@@ -1009,7 +1009,7 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
         const verifyTools = decodeToolsPrinters(
             await withRateLimit(() => openedRetranslator.getToolsInfo()).catch(() => null)
         );
-        if (verifyTools.nft?.equals(nftPrinter.address) && verifyTools.sbt?.equals(sbtPrinter.address)) {
+        if (verifyTools.nft?.equals(nftPrinter.address) && verifyTools.sbt?.equals(passportPrinter.address)) {
             console.log('✓ Printer addresses verified on R* (toolsInfo)');
         } else {
             console.warn('⚠ Printer addresses not yet set on R* (may still be processing)');
@@ -1093,7 +1093,7 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
         console.log('GameManager:', gameManager.address.toString());
         console.log('Retranslator:', retranslator.address.toString());
         console.log('NFTPrinter:', nftPrinter.address.toString());
-        console.log('SBTPrinter:', sbtPrinter.address.toString());
+        console.log('UniversalBlockchainPassportPrinter:', passportPrinter.address.toString());
         console.log('TON Race Game:', game.address.toString());
         console.log('Soulless Slot Machine:', ssm.address.toString());
         console.log('UBPS:', ubps.address.toString());
@@ -1176,11 +1176,11 @@ function buildRetroInstances(
         { ownerAddress, id: shipStationId, ownerPublicKey },
         compiled.subcontractCode,
     );
-    const { nftPrinter, sbtPrinter } = createPrinters(
-        ownerAddress, gameManager.address, compiled.nftPrinterCode, compiled.sbtPrinterCode,
-        compiled.nftPrinterItemCode, compiled.sbtPrinterItemCode,
+    const { nftPrinter, passportPrinter } = createPrinters(
+        ownerAddress, gameManager.address, compiled.nftPrinterCode, compiled.passportPrinterCode,
+        compiled.nftPrinterItemCode, compiled.passportPrinterItemCode,
     );
-    return { gameManager, game, jettonMinter, ssm, ubps, ownerShip, shipStation, nftPrinter, sbtPrinter };
+    return { gameManager, game, jettonMinter, ssm, ubps, ownerShip, shipStation, nftPrinter, passportPrinter };
 }
 
 type RetroInstances = ReturnType<typeof buildRetroInstances>;
@@ -1195,8 +1195,8 @@ function leafDeployTarget(
             return { address: inst.jettonMinter.address, value: toNano('0.5'), init: inst.jettonMinter.init! };
         case 'nftPrinter':
             return { address: inst.nftPrinter.address, value: toNano('0.2'), init: inst.nftPrinter.init! };
-        case 'sbtPrinter':
-            return { address: inst.sbtPrinter.address, value: toNano('0.2'), init: inst.sbtPrinter.init! };
+        case 'passportPrinter':
+            return { address: inst.passportPrinter.address, value: toNano('0.2'), init: inst.passportPrinter.init! };
         case 'games.ton_race_game.game':
             return { address: inst.game.address, value: toNano('0.5'), init: inst.game.init! };
         case 'games.soulless_slot_machine.ssm':
@@ -1222,7 +1222,7 @@ function setterLabel(kind: LeafKind): string {
         case 'jettonMinter':
             return 'setJettonInfo (R*)';
         case 'nftPrinter':
-        case 'sbtPrinter':
+        case 'passportPrinter':
             return 'setToolsInfo (R*)';
         case 'ssm':
         case 'ton_race_game':
@@ -1270,8 +1270,8 @@ function setLeafAddress(net: NetworkDeploymentData, key: string, address: Addres
             net.jettonMinter = info; break;
         case 'nftPrinter':
             net.nftPrinter = info; break;
-        case 'sbtPrinter':
-            net.sbtPrinter = info; break;
+        case 'passportPrinter':
+            net.passportPrinter = info; break;
         case 'ship_station':
             net.ship_station = info; break;
         case 'games.ton_race_game.game':
@@ -1441,7 +1441,7 @@ async function retroUpdate(options: CliOptions): Promise<void> {
     // Default unchanged printers to their (deterministic) freshly-compiled address —
     // identical to the live address when the code didn't change.
     let nftAddr: Address = curPrinters.nft ?? instances.nftPrinter.address;
-    let sbtAddr: Address = curPrinters.sbt ?? instances.sbtPrinter.address;
+    let sbtAddr: Address = curPrinters.sbt ?? instances.passportPrinter.address;
     let jettonDirty = false;
 
     const wasActive = (oldAddr: string | null): boolean =>
@@ -1463,8 +1463,8 @@ async function retroUpdate(options: CliOptions): Promise<void> {
                 jettonDirty = true; break;
             case 'nftPrinter':
                 nftAddr = instances.nftPrinter.address; toolsDirty = true; break;
-            case 'sbtPrinter':
-                sbtAddr = instances.sbtPrinter.address; toolsDirty = true; break;
+            case 'passportPrinter':
+                sbtAddr = instances.passportPrinter.address; toolsDirty = true; break;
             case 'ton_race_game':
                 newGames.ton_race_game = instances.game.address;
                 if (wasActive(leaf.oldAddr)) newGames.active_game = instances.game.address;

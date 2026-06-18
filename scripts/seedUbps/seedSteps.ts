@@ -63,7 +63,13 @@ import {
 // remainder returns. Keep this ABOVE 0.05 or every op asserts ERR_UBPS_VALUE_TOO_LOW (607).
 const OP_VALUE = toNano('0.055');
 const UNIT_DEPLOY_VALUE = toNano('0.1');   // self-deploy a Unit
-const CREATE_UNIT_VALUE = toNano('0.15');  // create a Unit via the master (deploy + initial pointer hop)
+// create a Unit via the master: ONE op — the master deploys the Unit carrying InitUnitPointer
+// as the deploy body (which only SETS STORAGE, sends nothing — NOT an extra hop), forwards the
+// fixed UBPS_CHILD_DEPLOY_VALUE (0.02), and refunds the rest to the payer. Measured payer cost
+// ≈ 0.037 TON (tests/ubps/ubps-refund.spec.ts "create-U"), the SAME as a plain Q/A/BS create —
+// so the binding constraint is the UBPS_MIN_OP_VALUE = 0.05 floor (static.tolk), NOT the op cost.
+// Front floor + ~10% (== OP_VALUE); the ~0.018 excess is refunded. Keep ≥ 0.05 or it 607s.
+const CREATE_UNIT_VALUE = toNano('0.055');
 const SET_POINTER_VALUE = toNano('0.1');   // SetPointer
 const FUND_FLOOR = toNano('0.25');         // top up a user wallet below this
 const FUND_AMOUNT = toNano('0.4');         // top-up amount (covers wallet deploy + unit create/deploy + setpointer)

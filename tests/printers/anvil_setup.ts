@@ -50,7 +50,7 @@ export async function setupAnvil(): Promise<AnvilSystem> {
             feeDenominator: 1,
             feeCollector: null,
             nftPrinterAddress: nftPrinter.address,
-            sbtPrinterAddress: null,
+            passportPrinterAddress: null,
             extra: null,
         }),
         toNano('0.2'),

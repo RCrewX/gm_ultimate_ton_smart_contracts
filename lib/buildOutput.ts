@@ -84,7 +84,7 @@ export interface NetworkDeploymentData {
     retranslator?: AddressInfo;
     /** GM-owned, R*-governed printers (collections). admin == gameManager. */
     nftPrinter?: AddressInfo;
-    sbtPrinter?: AddressInfo;
+    passportPrinter?: AddressInfo;
     jettonMinter?: AddressInfo;
     ownerJettonWallet?: AddressInfo;
     ship_station?: AddressInfo;
@@ -124,10 +124,10 @@ export interface ContractCodes {
     sbtnItem?: ContractCodeInfo;
     /** Optional: GM-owned printer collection code hashes (mint + revoke + edit) */
     nftPrinter?: ContractCodeInfo;
-    sbtPrinter?: ContractCodeInfo;
+    passportPrinter?: ContractCodeInfo;
     /** Optional: printer item variant code hashes (standard item + SetContent edit) */
     nftPrinterItem?: ContractCodeInfo;
-    sbtPrinterItem?: ContractCodeInfo;
+    passportPrinterItem?: ContractCodeInfo;
 }
 
 /**

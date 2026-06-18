@@ -136,7 +136,7 @@ import { Op as NftOp } from '../wrappers/tep/nft/types';
 import { Op as SbtOp } from '../wrappers/tep/sbt/types';
 import { Op as JettonOp, Errors as JettonErrors } from '../wrappers/tep/jetton/JettonConstants';
 import { NFTPrinterOp } from '../wrappers/printers/nft_printer/NFTPrinter';
-import { SBTPrinterOp } from '../wrappers/printers/sbt_printer/SBTPrinter';
+import { PassportOp } from '../wrappers/printers/universal_passport/UniversalBlockchainPassportPrinter';
 
 /**
  * Bump when the *shape* of the `constants` section changes (not when a value
@@ -192,7 +192,11 @@ import { SBTPrinterOp } from '../wrappers/printers/sbt_printer/SBTPrinter';
 // (new handlers / send paths) → BS/Unit/Q/A/master ADDRESSES move → a fresh deploy + re-seed are
 // required (same as the v7 note). The address-DETERMINING storage layouts are UNCHANGED, so the
 // off-chain (master, keys) → address formula the uap consumer relies on still holds.
-export const CONSTANTS_SCHEMA_VERSION = 8;
+// v9 (2026-06-19): the `sbtPrinter` leaf was renamed + redesigned into the
+// `passportPrinter` (UniversalBlockchainPassport) — ABI key `sbtPrinter` → `passportPrinter`,
+// new per-id typed content + owner self-deploy, R* ToolsInfo field/ops renamed (opcodes
+// unchanged). The deployed sbtPrinter leaf moves (new code) and is ORPHANED (no migration).
+export const CONSTANTS_SCHEMA_VERSION = 9;
 
 // ============================================================================
 // Serialisation helpers
@@ -312,7 +316,7 @@ export function buildGameConstants(): GameConstants {
             // GM-owned printer collections (DeployNft/DeploySbtn/RevokeSbtnItem/admin).
             // The R1 recipe opcodes (MintNft/MintSbt/RevokeSbt) live under `retranslator`.
             nftPrinter: hexMap(NFTPrinterOp),
-            sbtPrinter: hexMap(SBTPrinterOp),
+            passportPrinter: hexMap(PassportOp),
             // NOTE: the native ship session opcode `OP_SET_SESSION_KEY` is published under
             // `tonRaceGame` above (it is a ship message). The signed external move carries
             // no opcode (raw signature ++ ^SessionMoveInner) — see storageLayout for its wire.
@@ -331,7 +335,7 @@ export function buildGameConstants(): GameConstants {
             nft: parseErrorCodes('contracts/tep/nft/errors.tolk'),
             sbt: parseErrorCodes('contracts/tep/sbt/errors.tolk'),
             nftPrinter: parseErrorCodes('contracts/printers/nft_printer/errors.tolk'),
-            sbtPrinter: parseErrorCodes('contracts/printers/sbt_printer/errors.tolk'),
+            passportPrinter: parseErrorCodes('contracts/printers/universal_passport/errors.tolk'),
             // Native ship session errors (950..960) are live-parsed from the ship's own
             // errors.tolk — they land in `common`/`tonRaceGame` above, no separate group.
         },

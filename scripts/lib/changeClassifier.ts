@@ -26,7 +26,7 @@ export type LeafKind =
     | 'ton_race_game'
     | 'ubps'
     | 'nftPrinter'
-    | 'sbtPrinter'
+    | 'passportPrinter'
     | 'jettonMinter'
     | 'subcontract'
     | 'ownerShip';
@@ -186,8 +186,8 @@ export function orphanWarning(kind: LeafKind): string | null {
             return 'ALL RUDA jetton wallets + their balances (derived from the minter) are ORPHANED.';
         case 'nftPrinter':
             return 'ALL minted NFT items (derived from the NFT printer/collection) are ORPHANED.';
-        case 'sbtPrinter':
-            return 'ALL minted SBT items (derived from the SBT printer/collection) are ORPHANED.';
+        case 'passportPrinter':
+            return 'ALL minted UniversalBlockchainPassport items (derived from the passport printer/collection) are ORPHANED.';
         case 'ubps':
             return 'ALL UBPS Units / Questions / Answers / BeliefSets (derived from the master) are ORPHANED.';
         case 'ownerShip':

@@ -24,7 +24,7 @@ import { JettonMinter, jettonContentToCell } from '../../wrappers/tep/jetton/Jet
 import { JettonWallet } from '../../wrappers/tep/jetton/JettonWallet';
 import { Subcontract } from '../../wrappers/subcontract/Subcontract';
 import { NFTPrinter } from '../../wrappers/printers/nft_printer/NFTPrinter';
-import { SBTPrinter } from '../../wrappers/printers/sbt_printer/SBTPrinter';
+import { UniversalBlockchainPassportPrinter } from '../../wrappers/printers/universal_passport/UniversalBlockchainPassportPrinter';
 import {
     NetworkDeploymentData,
     DeploymentData,
@@ -62,9 +62,9 @@ export interface CompiledContracts {
     sbtnCollectionCode: Cell;
     nftItemCode: Cell;
     nftPrinterItemCode: Cell;
-    sbtPrinterItemCode: Cell;
+    passportPrinterItemCode: Cell;
     nftPrinterCode: Cell;
-    sbtPrinterCode: Cell;
+    passportPrinterCode: Cell;
 }
 
 export async function compileAllContracts(): Promise<CompiledContracts> {
@@ -91,9 +91,9 @@ export async function compileAllContracts(): Promise<CompiledContracts> {
         sbtnCollectionCode: await compile('SBTNCollection'),
         nftItemCode: await compile('NFTItem'),
         nftPrinterItemCode: await compile('NFTPrinterItem'),
-        sbtPrinterItemCode: await compile('SBTPrinterItem'),
+        passportPrinterItemCode: await compile('UniversalBlockchainPassport'),
         nftPrinterCode: await compile('NFTPrinter'),
-        sbtPrinterCode: await compile('SBTPrinter'),
+        passportPrinterCode: await compile('UniversalBlockchainPassportPrinter'),
     };
 }
 
@@ -136,9 +136,9 @@ export function buildFullContractCodes(c: CompiledContracts): ContractCodes {
         sbtnItem: getContractCodeData(c.sbtnItemCode),
         nftItem: getContractCodeData(c.nftItemCode),
         nftPrinterItem: getContractCodeData(c.nftPrinterItemCode),
-        sbtPrinterItem: getContractCodeData(c.sbtPrinterItemCode),
+        passportPrinterItem: getContractCodeData(c.passportPrinterItemCode),
         nftPrinter: getContractCodeData(c.nftPrinterCode),
-        sbtPrinter: getContractCodeData(c.sbtPrinterCode),
+        passportPrinter: getContractCodeData(c.passportPrinterCode),
     };
 }
 
@@ -160,9 +160,9 @@ export function createPrinters(
     ownerAddress: Address,
     gameManagerAddress: Address,
     nftPrinterCode: Cell,
-    sbtPrinterCode: Cell,
+    passportPrinterCode: Cell,
     nftItemCode: Cell,
-    sbtnItemCode: Cell,
+    passportItemCode: Cell,
 ) {
     const nftPrinter = NFTPrinter.createFromConfig(
         {
@@ -172,11 +172,11 @@ export function createPrinters(
         },
         nftPrinterCode,
     );
-    const sbtPrinter = SBTPrinter.createFromConfig(
-        { sbtnItemCode, adminAddress: gameManagerAddress },
-        sbtPrinterCode,
+    const passportPrinter = UniversalBlockchainPassportPrinter.createFromConfig(
+        { passportItemCode, adminAddress: gameManagerAddress },
+        passportPrinterCode,
     );
-    return { nftPrinter, sbtPrinter };
+    return { nftPrinter, passportPrinter };
 }
 
 export function calculateNetworkAddresses(
@@ -192,7 +192,7 @@ export function calculateNetworkAddresses(
     jettonWalletCode: Cell,
     subcontractCode: Cell,
     nftPrinterCode: Cell,
-    sbtPrinterCode: Cell,
+    passportPrinterCode: Cell,
     nftItemCode: Cell,
     sbtnItemCode: Cell,
     isTestnet: boolean,
@@ -252,8 +252,8 @@ export function calculateNetworkAddresses(
         ownerPublicKey,
     }, subcontractCode);
 
-    const { nftPrinter, sbtPrinter } = createPrinters(
-        ownerAddress, gameManager.address, nftPrinterCode, sbtPrinterCode, nftItemCode, sbtnItemCode,
+    const { nftPrinter, passportPrinter } = createPrinters(
+        ownerAddress, gameManager.address, nftPrinterCode, passportPrinterCode, nftItemCode, sbtnItemCode,
     );
 
     // UBPS master (independent module). Owner = the deployer wallet (admin only;
@@ -276,7 +276,7 @@ export function calculateNetworkAddresses(
         gameManager: formatAddress(gameManager.address, isTestnet),
         retranslator: formatAddress(retranslator.address, isTestnet),
         nftPrinter: formatAddress(nftPrinter.address, isTestnet),
-        sbtPrinter: formatAddress(sbtPrinter.address, isTestnet),
+        passportPrinter: formatAddress(passportPrinter.address, isTestnet),
         jettonMinter: formatAddress(jettonMinter.address, isTestnet),
         ownerJettonWallet: formatAddress(ownerJettonWallet.address, isTestnet),
         ship_station: formatAddress(shipStation.address, isTestnet),
@@ -312,7 +312,7 @@ export async function buildOfflineDeploymentData(
         ownerAddress, compiled.gameManagerCode, compiled.retranslatorCode, compiled.gameCode,
         compiled.shipCode, compiled.coordinateCellCode, compiled.ssmCode, compiled.ssmSlotCode,
         compiled.jettonMinterCode, compiled.jettonWalletCode, compiled.subcontractCode,
-        compiled.nftPrinterCode, compiled.sbtPrinterCode, compiled.nftPrinterItemCode, compiled.sbtPrinterItemCode,
+        compiled.nftPrinterCode, compiled.passportPrinterCode, compiled.nftPrinterItemCode, compiled.passportPrinterItemCode,
         true, shipStationId, ownerPublicKey, jettonContentUri,
         compiled.ubpsCode, compiled.ubpsUnitCode, compiled.ubpsQuestionCode, compiled.ubpsAnswerCode, compiled.ubpsBeliefSetCode,
     );
@@ -320,7 +320,7 @@ export async function buildOfflineDeploymentData(
         ownerAddress, compiled.gameManagerCode, compiled.retranslatorCode, compiled.gameCode,
         compiled.shipCode, compiled.coordinateCellCode, compiled.ssmCode, compiled.ssmSlotCode,
         compiled.jettonMinterCode, compiled.jettonWalletCode, compiled.subcontractCode,
-        compiled.nftPrinterCode, compiled.sbtPrinterCode, compiled.nftPrinterItemCode, compiled.sbtPrinterItemCode,
+        compiled.nftPrinterCode, compiled.passportPrinterCode, compiled.nftPrinterItemCode, compiled.passportPrinterItemCode,
         false, shipStationId, ownerPublicKey, jettonContentUri,
         compiled.ubpsCode, compiled.ubpsUnitCode, compiled.ubpsQuestionCode, compiled.ubpsAnswerCode, compiled.ubpsBeliefSetCode,
     );
