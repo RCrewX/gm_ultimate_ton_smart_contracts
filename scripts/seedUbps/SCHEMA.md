@@ -94,6 +94,17 @@ Controls HOW the user's Unit is created:
 validity/optimality, and **Unit→Unit subscription cycles are ALLOWED** (only the
 `beliefSets[].sets` DAG must be acyclic).
 
+## Fragments (`--include`)
+
+A **fragment** is a partial seed carrying only shared vocabulary —
+`questions` / `answers` / `beliefSets` (no `users`, no `network`) — marked with
+`"ubpsSeedFragment": 1`. The seeder's `--include <file>` flag merges one or more
+fragments into the `--file` seed **before** validation, BY id and idempotently (an
+id already present in the seed is skipped). This lets a seed reference shared ids
+(e.g. the UBPS Canon's `"bs.canon"`) and pull their definitions from one place. The
+merge helper is `mergeSeedFragments()` in [`types.ts`](./types.ts); the canon
+fragment is [`canon.json`](./canon.json) (see [`CANON.md`](./CANON.md)).
+
 ## Manifest output
 
 After a run the seeder writes `deployment_info/ubps-seed.<network>.manifest.json`

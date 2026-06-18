@@ -2,11 +2,15 @@
 // Pure-logic unit test for the UBPS seeder (no sandbox / no RPC):
 // schema validation (good + bad), topo sort, cycle rejection, Unit->Unit cycle
 // acceptance, cap enforcement, label resolution, deterministic wallet derivation.
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { Address, beginCell } from '@ton/core';
 import {
     validateSeed,
+    mergeSeedFragments,
     topoSortBeliefSets,
     UbpsSeed,
+    SeedFragment,
     MAX_A,
     MAX_BS,
     UBPS_MAX_STRING_BYTES,
@@ -199,6 +203,78 @@ describe('validateSeed — bad cases', () => {
         const r = validateSeed(s, 'testnet');
         expect(r.ok).toBe(false);
         expect(r.errors.join('\n')).toMatch(/cycle/);
+    });
+});
+
+describe('mergeSeedFragments (--include) + the real canon.json', () => {
+    // The shipped canon fragment.
+    const canon = JSON.parse(
+        readFileSync(join(__dirname, '../../scripts/seedUbps/canon.json'), 'utf-8'),
+    ) as SeedFragment;
+
+    // A seed that REFERENCES bs.canon (membership) without defining it — like the demo seed.
+    function seedReferencingCanon(): UbpsSeed {
+        const s = baseSeed();
+        s.beliefSets[1].sets = ['bs.core', 'bs.canon']; // b.profile declares UBPS membership
+        return s;
+    }
+
+    it('canon.json alone is a self-consistent fragment (5 Q / 5 A / 1 BS, all within caps)', () => {
+        expect(canon.questions).toHaveLength(5);
+        expect(canon.answers).toHaveLength(5);
+        expect(canon.beliefSets).toHaveLength(1);
+        const bs = canon.beliefSets![0];
+        expect(bs.id).toBe('bs.canon');
+        expect(bs.name).toBe('UBPS Canon');
+        expect(bs.root).toBe(false);
+        expect(bs.answers).toHaveLength(5);
+        // every canon string is within the on-chain byte caps
+        for (const q of canon.questions!) expect(Buffer.byteLength(q.text, 'utf8')).toBeLessThanOrEqual(UBPS_MAX_STRING_BYTES);
+        for (const a of canon.answers!) expect(Buffer.byteLength(a.text, 'utf8')).toBeLessThanOrEqual(UBPS_MAX_STRING_BYTES);
+        // the canon answers reference exactly the canon questions
+        const qIds = new Set(canon.questions!.map(q => q.id));
+        for (const a of canon.answers!) expect(qIds.has(a.question)).toBe(true);
+        // bs.canon references exactly the 5 canon answers
+        const aIds = new Set(canon.answers!.map(a => a.id));
+        for (const ref of bs.answers) expect(aIds.has(ref)).toBe(true);
+    });
+
+    it('a seed referencing bs.canon fails validation alone, then passes once canon is merged', () => {
+        const before = validateSeed(seedReferencingCanon(), 'testnet');
+        expect(before.ok).toBe(false);
+        expect(before.errors.join('\n')).toMatch(/does not resolve to a beliefSet/);
+
+        const { seed, added } = mergeSeedFragments(seedReferencingCanon(), [canon]);
+        expect(added).toEqual({ questions: 5, answers: 5, beliefSets: 1 });
+        const after = validateSeed(seed, 'testnet');
+        expect(after.ok).toBe(true);
+        expect(after.errors).toHaveLength(0);
+        // the canon BeliefSet now resolves and is part of the merged graph
+        expect(seed.beliefSets.some(b => b.id === 'bs.canon')).toBe(true);
+    });
+
+    it('merge is idempotent — including the same fragment twice adds nothing the second time', () => {
+        const once = mergeSeedFragments(seedReferencingCanon(), [canon]);
+        const twice = mergeSeedFragments(once.seed, [canon]);
+        expect(twice.added).toEqual({ questions: 0, answers: 0, beliefSets: 0 });
+        expect(twice.skipped).toEqual({ questions: 5, answers: 5, beliefSets: 1 });
+        expect(twice.seed.questions).toHaveLength(once.seed.questions.length);
+        expect(twice.seed.beliefSets).toHaveLength(once.seed.beliefSets.length);
+    });
+
+    it('the base wins on an id clash (a baked-in canon is not duplicated by --include)', () => {
+        // base already defines bs.canon itself; the fragment must be skipped, not duplicated
+        const baked = mergeSeedFragments(seedReferencingCanon(), [canon]).seed;
+        const reMerged = mergeSeedFragments(baked, [canon]);
+        expect(reMerged.skipped.beliefSets).toBe(1);
+        expect(reMerged.seed.beliefSets.filter(b => b.id === 'bs.canon')).toHaveLength(1);
+    });
+
+    it('does not mutate the base seed object', () => {
+        const base = seedReferencingCanon();
+        const lenBefore = base.questions.length;
+        mergeSeedFragments(base, [canon]);
+        expect(base.questions).toHaveLength(lenBefore); // base untouched; merge returns a new seed
     });
 });
 

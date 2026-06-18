@@ -278,3 +278,58 @@ export function validateSeed(
     if (errors.length > 0) return { ok: false, errors };
     return { ok: true, errors: [], seed: input as UbpsSeed };
 }
+
+// ---------------------------------------------------------------------------
+//  Seed fragments (--include): a reusable block of questions/answers/beliefSets
+//  — e.g. the UBPS Canon (scripts/seedUbps/canon.json) — merged INTO a seed
+//  before validation, so any seed can just reference shared ids (like
+//  "bs.canon") and pull their definitions from one place. A fragment carries
+//  only the shared Q/A/BS vocabulary; its `users`/`network`/version (if any)
+//  are ignored. Merge is BY id and idempotent: a fragment entity whose id
+//  already exists in the base is SKIPPED (the base wins), so baking a fragment
+//  in AND `--include`-ing it, or including the same fragment twice, is a no-op.
+//  Validation runs on the merged result, so any breakage still surfaces.
+// ---------------------------------------------------------------------------
+export interface SeedFragment {
+    ubpsSeedFragment?: number;
+    questions?: SeedQuestion[];
+    answers?: SeedAnswer[];
+    beliefSets?: SeedBeliefSet[];
+}
+
+export interface MergeReport {
+    seed: UbpsSeed;
+    added: { questions: number; answers: number; beliefSets: number };
+    skipped: { questions: number; answers: number; beliefSets: number };
+}
+
+export function mergeSeedFragments(base: UbpsSeed, fragments: SeedFragment[]): MergeReport {
+    const seed: UbpsSeed = {
+        ...base,
+        questions: [...(base?.questions ?? [])],
+        answers: [...(base?.answers ?? [])],
+        beliefSets: [...(base?.beliefSets ?? [])],
+        users: [...(base?.users ?? [])],
+    };
+    const added = { questions: 0, answers: 0, beliefSets: 0 };
+    const skipped = { questions: 0, answers: 0, beliefSets: 0 };
+    const qIds = new Set(seed.questions.map(q => q?.id));
+    const aIds = new Set(seed.answers.map(a => a?.id));
+    const bsIds = new Set(seed.beliefSets.map(b => b?.id));
+
+    for (const frag of fragments ?? []) {
+        for (const q of frag?.questions ?? []) {
+            if (qIds.has(q?.id)) { skipped.questions++; continue; }
+            qIds.add(q?.id); seed.questions.push(q); added.questions++;
+        }
+        for (const a of frag?.answers ?? []) {
+            if (aIds.has(a?.id)) { skipped.answers++; continue; }
+            aIds.add(a?.id); seed.answers.push(a); added.answers++;
+        }
+        for (const bs of frag?.beliefSets ?? []) {
+            if (bsIds.has(bs?.id)) { skipped.beliefSets++; continue; }
+            bsIds.add(bs?.id); seed.beliefSets.push(bs); added.beliefSets++;
+        }
+    }
+    return { seed, added, skipped };
+}

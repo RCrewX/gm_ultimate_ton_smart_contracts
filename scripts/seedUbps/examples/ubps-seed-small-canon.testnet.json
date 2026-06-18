@@ -1,0 +1,1445 @@
+{
+  "ubpsSeedVersion": 1,
+  "network": "testnet",
+  "meta": {
+    "description": "UBPS testnet seed (SMALL ~25-user set) WITH UBPS Canon membership: 6 representative root Beliefs list \"bs.canon\" in their sets[] to declare UBPS membership. The canon Q/A + bs.canon themselves are NOT defined here — supply them at run time with `--include scripts/seedUbps/canon.json` (idempotent merge). Derived from the 25-user small set.",
+    "generatedAt": "2026-06-17T10:37:29Z",
+    "generator": "brain:small-set+canon-membership",
+    "derivedFrom": "20260617-133729_ubps-seed-small.testnet.json",
+    "notes": "Run: pnpm seed:ubps:dry --file scripts/seedUbps/examples/ubps-seed-small-canon.testnet.json --include scripts/seedUbps/canon.json . Without --include validation fails (bs.canon undefined) — by design.",
+    "counts": {
+      "users": 25,
+      "questions": 32,
+      "answers": 128,
+      "beliefSets": 32
+    },
+    "requiresInclude": [
+      "scripts/seedUbps/canon.json"
+    ],
+    "canonMembers": [
+      "b.centrist",
+      "b.classical-liberal",
+      "b.conservative",
+      "b.green-progressive",
+      "b.libertarian",
+      "b.social-democrat"
+    ]
+  },
+  "questions": [
+    {
+      "id": "q.eco.1",
+      "text": "Should the state redistribute wealth through progressive taxation?"
+    },
+    {
+      "id": "q.eco.2",
+      "text": "Is a universal basic income a good policy?"
+    },
+    {
+      "id": "q.eco.3",
+      "text": "Should major industries be publicly owned?"
+    },
+    {
+      "id": "q.eco.4",
+      "text": "Is free-market capitalism the best economic system?"
+    },
+    {
+      "id": "q.eco.5",
+      "text": "Should there be a high national minimum wage?"
+    },
+    {
+      "id": "q.eco.6",
+      "text": "Should healthcare be free at the point of use?"
+    },
+    {
+      "id": "q.eco.7",
+      "text": "Is strong financial regulation necessary?"
+    },
+    {
+      "id": "q.eco.8",
+      "text": "Is globalization good for ordinary workers?"
+    },
+    {
+      "id": "q.pol.1",
+      "text": "Should immigration be open and welcoming?"
+    },
+    {
+      "id": "q.pol.2",
+      "text": "Is liberal democracy the best system of government?"
+    },
+    {
+      "id": "q.pol.3",
+      "text": "Should the state have broad surveillance powers?"
+    },
+    {
+      "id": "q.pol.4",
+      "text": "Should political power be decentralized to regions?"
+    },
+    {
+      "id": "q.pol.5",
+      "text": "Should money in politics be strictly limited?"
+    },
+    {
+      "id": "q.pol.6",
+      "text": "Should the death penalty be legal?"
+    },
+    {
+      "id": "q.pol.7",
+      "text": "Is national sovereignty more important than global cooperation?"
+    },
+    {
+      "id": "q.pol.8",
+      "text": "Should military spending be increased?"
+    },
+    {
+      "id": "q.rel.1",
+      "text": "Does God exist?"
+    },
+    {
+      "id": "q.rel.2",
+      "text": "Should religion influence public policy?"
+    },
+    {
+      "id": "q.rel.3",
+      "text": "Is faith compatible with science?"
+    },
+    {
+      "id": "q.rel.4",
+      "text": "Is there life after death?"
+    },
+    {
+      "id": "q.rel.5",
+      "text": "Should children be raised in their family's religion?"
+    },
+    {
+      "id": "q.rel.6",
+      "text": "Is morality possible without religion?"
+    },
+    {
+      "id": "q.rel.7",
+      "text": "Should religious institutions be tax-exempt?"
+    },
+    {
+      "id": "q.rel.8",
+      "text": "Should the state be strictly secular?"
+    },
+    {
+      "id": "q.soc.1",
+      "text": "Is individual freedom more important than collective welfare?"
+    },
+    {
+      "id": "q.soc.2",
+      "text": "Should society prioritize tradition over progress?"
+    },
+    {
+      "id": "q.soc.3",
+      "text": "Should diversity be actively promoted in institutions?"
+    },
+    {
+      "id": "q.soc.4",
+      "text": "Should euthanasia be legal?"
+    },
+    {
+      "id": "q.soc.5",
+      "text": "Should recreational drug use be decriminalized?"
+    },
+    {
+      "id": "q.soc.6",
+      "text": "Is the traditional family the foundation of society?"
+    },
+    {
+      "id": "q.soc.7",
+      "text": "Is personal privacy more important than public safety?"
+    },
+    {
+      "id": "q.soc.8",
+      "text": "Should education be standardized for everyone?"
+    }
+  ],
+  "answers": [
+    {
+      "id": "a.eco.1.a",
+      "question": "q.eco.1",
+      "text": "Yes, steep progressive taxes are essential to reduce inequality"
+    },
+    {
+      "id": "a.eco.1.b",
+      "question": "q.eco.1",
+      "text": "Mild progressive taxation is fair and sufficient"
+    },
+    {
+      "id": "a.eco.1.c",
+      "question": "q.eco.1",
+      "text": "Taxes should be low and mostly flat"
+    },
+    {
+      "id": "a.eco.1.d",
+      "question": "q.eco.1",
+      "text": "No, redistribution is unjust and harms growth"
+    },
+    {
+      "id": "a.eco.2.a",
+      "question": "q.eco.2",
+      "text": "Yes, everyone deserves an unconditional basic income"
+    },
+    {
+      "id": "a.eco.2.b",
+      "question": "q.eco.2",
+      "text": "A limited basic income could help if carefully funded"
+    },
+    {
+      "id": "a.eco.2.c",
+      "question": "q.eco.2",
+      "text": "Targeted welfare works better than universal payments"
+    },
+    {
+      "id": "a.eco.2.d",
+      "question": "q.eco.2",
+      "text": "No, basic income discourages work and is unaffordable"
+    },
+    {
+      "id": "a.eco.3.a",
+      "question": "q.eco.3",
+      "text": "Yes, key industries belong in public hands"
+    },
+    {
+      "id": "a.eco.3.b",
+      "question": "q.eco.3",
+      "text": "Only natural monopolies should be publicly owned"
+    },
+    {
+      "id": "a.eco.3.c",
+      "question": "q.eco.3",
+      "text": "Mostly private, with light public oversight"
+    },
+    {
+      "id": "a.eco.3.d",
+      "question": "q.eco.3",
+      "text": "No, private ownership is almost always better"
+    },
+    {
+      "id": "a.eco.4.a",
+      "question": "q.eco.4",
+      "text": "Yes, free markets create the most prosperity"
+    },
+    {
+      "id": "a.eco.4.b",
+      "question": "q.eco.4",
+      "text": "Markets work best with a strong safety net"
+    },
+    {
+      "id": "a.eco.4.c",
+      "question": "q.eco.4",
+      "text": "A mixed economy balances markets and the state"
+    },
+    {
+      "id": "a.eco.4.d",
+      "question": "q.eco.4",
+      "text": "No, capitalism is exploitative and should be replaced"
+    },
+    {
+      "id": "a.eco.5.a",
+      "question": "q.eco.5",
+      "text": "Yes, a living wage is a basic right"
+    },
+    {
+      "id": "a.eco.5.b",
+      "question": "q.eco.5",
+      "text": "Raise it moderately and index it to inflation"
+    },
+    {
+      "id": "a.eco.5.c",
+      "question": "q.eco.5",
+      "text": "Keep it low so jobs are not lost"
+    },
+    {
+      "id": "a.eco.5.d",
+      "question": "q.eco.5",
+      "text": "No, wages should be set by the market alone"
+    },
+    {
+      "id": "a.eco.6.a",
+      "question": "q.eco.6",
+      "text": "Yes, universal public healthcare for everyone"
+    },
+    {
+      "id": "a.eco.6.b",
+      "question": "q.eco.6",
+      "text": "Public coverage with a private option"
+    },
+    {
+      "id": "a.eco.6.c",
+      "question": "q.eco.6",
+      "text": "Mostly private insurance with a safety net"
+    },
+    {
+      "id": "a.eco.6.d",
+      "question": "q.eco.6",
+      "text": "No, healthcare should be a private market"
+    },
+    {
+      "id": "a.eco.7.a",
+      "question": "q.eco.7",
+      "text": "Yes, markets need tight regulation to stay fair"
+    },
+    {
+      "id": "a.eco.7.b",
+      "question": "q.eco.7",
+      "text": "Moderate, targeted rules are enough"
+    },
+    {
+      "id": "a.eco.7.c",
+      "question": "q.eco.7",
+      "text": "Regulation should be minimal and simple"
+    },
+    {
+      "id": "a.eco.7.d",
+      "question": "q.eco.7",
+      "text": "No, deregulated markets work best"
+    },
+    {
+      "id": "a.eco.8.a",
+      "question": "q.eco.8",
+      "text": "Yes, open trade lifts wages and lowers prices"
+    },
+    {
+      "id": "a.eco.8.b",
+      "question": "q.eco.8",
+      "text": "Good overall, but the losers must be compensated"
+    },
+    {
+      "id": "a.eco.8.c",
+      "question": "q.eco.8",
+      "text": "It mostly benefits elites, not workers"
+    },
+    {
+      "id": "a.eco.8.d",
+      "question": "q.eco.8",
+      "text": "No, we should protect domestic jobs and industry"
+    },
+    {
+      "id": "a.pol.1.a",
+      "question": "q.pol.1",
+      "text": "Yes, open borders and generous asylum"
+    },
+    {
+      "id": "a.pol.1.b",
+      "question": "q.pol.1",
+      "text": "Welcoming, but with managed and orderly limits"
+    },
+    {
+      "id": "a.pol.1.c",
+      "question": "q.pol.1",
+      "text": "Strictly limited to clear national needs"
+    },
+    {
+      "id": "a.pol.1.d",
+      "question": "q.pol.1",
+      "text": "No, immigration should be sharply reduced"
+    },
+    {
+      "id": "a.pol.2.a",
+      "question": "q.pol.2",
+      "text": "Yes, democracy and rights are non-negotiable"
+    },
+    {
+      "id": "a.pol.2.b",
+      "question": "q.pol.2",
+      "text": "Democracy is best but needs serious reform"
+    },
+    {
+      "id": "a.pol.2.c",
+      "question": "q.pol.2",
+      "text": "A strong leader can be better than gridlock"
+    },
+    {
+      "id": "a.pol.2.d",
+      "question": "q.pol.2",
+      "text": "No, expert or authoritarian rule is more effective"
+    },
+    {
+      "id": "a.pol.3.a",
+      "question": "q.pol.3",
+      "text": "No, privacy must be protected from the state"
+    },
+    {
+      "id": "a.pol.3.b",
+      "question": "q.pol.3",
+      "text": "Only with strict warrants and oversight"
+    },
+    {
+      "id": "a.pol.3.c",
+      "question": "q.pol.3",
+      "text": "Broad powers are fine if they keep us safe"
+    },
+    {
+      "id": "a.pol.3.d",
+      "question": "q.pol.3",
+      "text": "Yes, security clearly outweighs privacy"
+    },
+    {
+      "id": "a.pol.4.a",
+      "question": "q.pol.4",
+      "text": "Yes, push power down to local communities"
+    },
+    {
+      "id": "a.pol.4.b",
+      "question": "q.pol.4",
+      "text": "Balance national unity with regional autonomy"
+    },
+    {
+      "id": "a.pol.4.c",
+      "question": "q.pol.4",
+      "text": "A strong central government is preferable"
+    },
+    {
+      "id": "a.pol.4.d",
+      "question": "q.pol.4",
+      "text": "No, only central authority ensures order"
+    },
+    {
+      "id": "a.pol.5.a",
+      "question": "q.pol.5",
+      "text": "Yes, ban private money from campaigns"
+    },
+    {
+      "id": "a.pol.5.b",
+      "question": "q.pol.5",
+      "text": "Cap and fully disclose all donations"
+    },
+    {
+      "id": "a.pol.5.c",
+      "question": "q.pol.5",
+      "text": "Light limits with full transparency"
+    },
+    {
+      "id": "a.pol.5.d",
+      "question": "q.pol.5",
+      "text": "No, political spending is free expression"
+    },
+    {
+      "id": "a.pol.6.a",
+      "question": "q.pol.6",
+      "text": "No, the state should never execute anyone"
+    },
+    {
+      "id": "a.pol.6.b",
+      "question": "q.pol.6",
+      "text": "Only for the most extreme crimes, rarely"
+    },
+    {
+      "id": "a.pol.6.c",
+      "question": "q.pol.6",
+      "text": "Yes, for serious crimes with strict due process"
+    },
+    {
+      "id": "a.pol.6.d",
+      "question": "q.pol.6",
+      "text": "Yes, it is a just and necessary deterrent"
+    },
+    {
+      "id": "a.pol.7.a",
+      "question": "q.pol.7",
+      "text": "No, shared global institutions must come first"
+    },
+    {
+      "id": "a.pol.7.b",
+      "question": "q.pol.7",
+      "text": "Cooperate, but protect core sovereignty"
+    },
+    {
+      "id": "a.pol.7.c",
+      "question": "q.pol.7",
+      "text": "Sovereignty first, cooperate only when useful"
+    },
+    {
+      "id": "a.pol.7.d",
+      "question": "q.pol.7",
+      "text": "Yes, the nation must always come first"
+    },
+    {
+      "id": "a.pol.8.a",
+      "question": "q.pol.8",
+      "text": "No, cut defense and fund social needs"
+    },
+    {
+      "id": "a.pol.8.b",
+      "question": "q.pol.8",
+      "text": "Keep spending steady and efficient"
+    },
+    {
+      "id": "a.pol.8.c",
+      "question": "q.pol.8",
+      "text": "Increase it to meet real threats"
+    },
+    {
+      "id": "a.pol.8.d",
+      "question": "q.pol.8",
+      "text": "Yes, a strong military is the top priority"
+    },
+    {
+      "id": "a.rel.1.a",
+      "question": "q.rel.1",
+      "text": "Yes, I firmly believe God exists"
+    },
+    {
+      "id": "a.rel.1.b",
+      "question": "q.rel.1",
+      "text": "I lean toward belief but hold some doubts"
+    },
+    {
+      "id": "a.rel.1.c",
+      "question": "q.rel.1",
+      "text": "I am agnostic; it cannot be known"
+    },
+    {
+      "id": "a.rel.1.d",
+      "question": "q.rel.1",
+      "text": "No, there is no god"
+    },
+    {
+      "id": "a.rel.2.a",
+      "question": "q.rel.2",
+      "text": "Yes, faith should guide our laws"
+    },
+    {
+      "id": "a.rel.2.b",
+      "question": "q.rel.2",
+      "text": "Religious values can inform public debate"
+    },
+    {
+      "id": "a.rel.2.c",
+      "question": "q.rel.2",
+      "text": "Keep faith private, out of policy"
+    },
+    {
+      "id": "a.rel.2.d",
+      "question": "q.rel.2",
+      "text": "No, the state must be fully secular"
+    },
+    {
+      "id": "a.rel.3.a",
+      "question": "q.rel.3",
+      "text": "Yes, faith and science fully agree"
+    },
+    {
+      "id": "a.rel.3.b",
+      "question": "q.rel.3",
+      "text": "They address different questions"
+    },
+    {
+      "id": "a.rel.3.c",
+      "question": "q.rel.3",
+      "text": "They often conflict but can coexist"
+    },
+    {
+      "id": "a.rel.3.d",
+      "question": "q.rel.3",
+      "text": "No, science makes faith obsolete"
+    },
+    {
+      "id": "a.rel.4.a",
+      "question": "q.rel.4",
+      "text": "Yes, the soul lives on after death"
+    },
+    {
+      "id": "a.rel.4.b",
+      "question": "q.rel.4",
+      "text": "Perhaps; I hope so but am unsure"
+    },
+    {
+      "id": "a.rel.4.c",
+      "question": "q.rel.4",
+      "text": "Probably not, but no one can know"
+    },
+    {
+      "id": "a.rel.4.d",
+      "question": "q.rel.4",
+      "text": "No, death is the end of consciousness"
+    },
+    {
+      "id": "a.rel.5.a",
+      "question": "q.rel.5",
+      "text": "Yes, faith should be taught from birth"
+    },
+    {
+      "id": "a.rel.5.b",
+      "question": "q.rel.5",
+      "text": "Teach the tradition but allow free choice"
+    },
+    {
+      "id": "a.rel.5.c",
+      "question": "q.rel.5",
+      "text": "Expose children to many worldviews"
+    },
+    {
+      "id": "a.rel.5.d",
+      "question": "q.rel.5",
+      "text": "No, let children choose as adults"
+    },
+    {
+      "id": "a.rel.6.a",
+      "question": "q.rel.6",
+      "text": "No, morality requires religious faith"
+    },
+    {
+      "id": "a.rel.6.b",
+      "question": "q.rel.6",
+      "text": "Religion strengthens morality but is not required"
+    },
+    {
+      "id": "a.rel.6.c",
+      "question": "q.rel.6",
+      "text": "Morality is mostly independent of religion"
+    },
+    {
+      "id": "a.rel.6.d",
+      "question": "q.rel.6",
+      "text": "Yes, ethics stand entirely on their own"
+    },
+    {
+      "id": "a.rel.7.a",
+      "question": "q.rel.7",
+      "text": "Yes, fully exempt as a public good"
+    },
+    {
+      "id": "a.rel.7.b",
+      "question": "q.rel.7",
+      "text": "Exempt only their charitable work"
+    },
+    {
+      "id": "a.rel.7.c",
+      "question": "q.rel.7",
+      "text": "Tax them like any other organization"
+    },
+    {
+      "id": "a.rel.7.d",
+      "question": "q.rel.7",
+      "text": "No, exemptions are an unfair subsidy"
+    },
+    {
+      "id": "a.rel.8.a",
+      "question": "q.rel.8",
+      "text": "No, the state should openly affirm faith"
+    },
+    {
+      "id": "a.rel.8.b",
+      "question": "q.rel.8",
+      "text": "Respect religion but stay neutral"
+    },
+    {
+      "id": "a.rel.8.c",
+      "question": "q.rel.8",
+      "text": "Lean secular while tolerating faith"
+    },
+    {
+      "id": "a.rel.8.d",
+      "question": "q.rel.8",
+      "text": "Yes, strict separation of church and state"
+    },
+    {
+      "id": "a.soc.1.a",
+      "question": "q.soc.1",
+      "text": "Yes, individual liberty comes first"
+    },
+    {
+      "id": "a.soc.1.b",
+      "question": "q.soc.1",
+      "text": "Liberty matters most, with some shared duties"
+    },
+    {
+      "id": "a.soc.1.c",
+      "question": "q.soc.1",
+      "text": "Balance the individual and the community"
+    },
+    {
+      "id": "a.soc.1.d",
+      "question": "q.soc.1",
+      "text": "No, collective welfare must come first"
+    },
+    {
+      "id": "a.soc.2.a",
+      "question": "q.soc.2",
+      "text": "Yes, tradition is our surest guide"
+    },
+    {
+      "id": "a.soc.2.b",
+      "question": "q.soc.2",
+      "text": "Honor tradition but adapt it slowly"
+    },
+    {
+      "id": "a.soc.2.c",
+      "question": "q.soc.2",
+      "text": "Embrace change while keeping what works"
+    },
+    {
+      "id": "a.soc.2.d",
+      "question": "q.soc.2",
+      "text": "No, progress should lead the way"
+    },
+    {
+      "id": "a.soc.3.a",
+      "question": "q.soc.3",
+      "text": "Yes, actively pursue inclusion and diversity"
+    },
+    {
+      "id": "a.soc.3.b",
+      "question": "q.soc.3",
+      "text": "Encourage it through equal opportunity"
+    },
+    {
+      "id": "a.soc.3.c",
+      "question": "q.soc.3",
+      "text": "Judge only by merit, ignore group identity"
+    },
+    {
+      "id": "a.soc.3.d",
+      "question": "q.soc.3",
+      "text": "No, such programs are unfair and divisive"
+    },
+    {
+      "id": "a.soc.4.a",
+      "question": "q.soc.4",
+      "text": "Yes, people have the right to die with dignity"
+    },
+    {
+      "id": "a.soc.4.b",
+      "question": "q.soc.4",
+      "text": "Allow it with strict medical safeguards"
+    },
+    {
+      "id": "a.soc.4.c",
+      "question": "q.soc.4",
+      "text": "Only in rare, terminal cases"
+    },
+    {
+      "id": "a.soc.4.d",
+      "question": "q.soc.4",
+      "text": "No, ending a life is always wrong"
+    },
+    {
+      "id": "a.soc.5.a",
+      "question": "q.soc.5",
+      "text": "Yes, treat drug use as a health issue"
+    },
+    {
+      "id": "a.soc.5.b",
+      "question": "q.soc.5",
+      "text": "Decriminalize soft drugs only"
+    },
+    {
+      "id": "a.soc.5.c",
+      "question": "q.soc.5",
+      "text": "Keep it illegal but focus on treatment"
+    },
+    {
+      "id": "a.soc.5.d",
+      "question": "q.soc.5",
+      "text": "No, drugs must stay strictly prohibited"
+    },
+    {
+      "id": "a.soc.6.a",
+      "question": "q.soc.6",
+      "text": "Yes, the traditional family is essential"
+    },
+    {
+      "id": "a.soc.6.b",
+      "question": "q.soc.6",
+      "text": "Families matter in many valid forms"
+    },
+    {
+      "id": "a.soc.6.c",
+      "question": "q.soc.6",
+      "text": "Family structure is a private choice"
+    },
+    {
+      "id": "a.soc.6.d",
+      "question": "q.soc.6",
+      "text": "No, that idea is outdated"
+    },
+    {
+      "id": "a.soc.7.a",
+      "question": "q.soc.7",
+      "text": "Yes, privacy is a fundamental right"
+    },
+    {
+      "id": "a.soc.7.b",
+      "question": "q.soc.7",
+      "text": "Protect privacy with narrow exceptions"
+    },
+    {
+      "id": "a.soc.7.c",
+      "question": "q.soc.7",
+      "text": "Safety can justify limiting privacy"
+    },
+    {
+      "id": "a.soc.7.d",
+      "question": "q.soc.7",
+      "text": "No, public safety must come first"
+    },
+    {
+      "id": "a.soc.8.a",
+      "question": "q.soc.8",
+      "text": "Yes, one strong common standard for all"
+    },
+    {
+      "id": "a.soc.8.b",
+      "question": "q.soc.8",
+      "text": "A common core with room to adapt"
+    },
+    {
+      "id": "a.soc.8.c",
+      "question": "q.soc.8",
+      "text": "Give schools and parents broad choice"
+    },
+    {
+      "id": "a.soc.8.d",
+      "question": "q.soc.8",
+      "text": "No, education should be fully personalized"
+    }
+  ],
+  "beliefSets": [
+    {
+      "id": "bs.eco.progressive",
+      "root": false,
+      "name": "Progressive economics",
+      "answers": [
+        "a.eco.1.a",
+        "a.eco.2.b",
+        "a.eco.3.b",
+        "a.eco.4.b",
+        "a.eco.5.a",
+        "a.eco.6.a",
+        "a.eco.7.a",
+        "a.eco.8.b"
+      ],
+      "sets": []
+    },
+    {
+      "id": "bs.eco.centrist",
+      "root": false,
+      "name": "Mixed-market economics",
+      "answers": [
+        "a.eco.1.b",
+        "a.eco.2.c",
+        "a.eco.3.c",
+        "a.eco.4.c",
+        "a.eco.5.b",
+        "a.eco.6.b",
+        "a.eco.7.b",
+        "a.eco.8.b"
+      ],
+      "sets": []
+    },
+    {
+      "id": "bs.eco.conservative",
+      "root": false,
+      "name": "Free-market economics",
+      "answers": [
+        "a.eco.1.c",
+        "a.eco.2.d",
+        "a.eco.3.d",
+        "a.eco.4.a",
+        "a.eco.5.c",
+        "a.eco.6.c",
+        "a.eco.7.c",
+        "a.eco.8.a"
+      ],
+      "sets": []
+    },
+    {
+      "id": "bs.pol.liberal",
+      "root": false,
+      "name": "Liberal democracy",
+      "answers": [
+        "a.pol.1.b",
+        "a.pol.2.a",
+        "a.pol.3.b",
+        "a.pol.4.a",
+        "a.pol.5.b",
+        "a.pol.6.a",
+        "a.pol.7.b",
+        "a.pol.8.b"
+      ],
+      "sets": []
+    },
+    {
+      "id": "bs.pol.centrist",
+      "root": false,
+      "name": "Political centrism",
+      "answers": [
+        "a.pol.1.b",
+        "a.pol.2.b",
+        "a.pol.3.b",
+        "a.pol.4.b",
+        "a.pol.5.c",
+        "a.pol.6.b",
+        "a.pol.7.b",
+        "a.pol.8.b"
+      ],
+      "sets": []
+    },
+    {
+      "id": "bs.pol.authoritarian",
+      "root": false,
+      "name": "Strong-state authoritarianism",
+      "answers": [
+        "a.pol.1.d",
+        "a.pol.2.c",
+        "a.pol.3.d",
+        "a.pol.4.d",
+        "a.pol.5.d",
+        "a.pol.6.d",
+        "a.pol.7.d",
+        "a.pol.8.d"
+      ],
+      "sets": []
+    },
+    {
+      "id": "bs.rel.devout",
+      "root": false,
+      "name": "Devout faith",
+      "answers": [
+        "a.rel.1.a",
+        "a.rel.2.b",
+        "a.rel.3.b",
+        "a.rel.4.a",
+        "a.rel.5.b",
+        "a.rel.6.b",
+        "a.rel.7.a",
+        "a.rel.8.b"
+      ],
+      "sets": []
+    },
+    {
+      "id": "bs.rel.moderate",
+      "root": false,
+      "name": "Moderate faith",
+      "answers": [
+        "a.rel.1.b",
+        "a.rel.2.c",
+        "a.rel.3.b",
+        "a.rel.4.b",
+        "a.rel.5.c",
+        "a.rel.6.c",
+        "a.rel.7.b",
+        "a.rel.8.c"
+      ],
+      "sets": []
+    },
+    {
+      "id": "bs.rel.secular",
+      "root": false,
+      "name": "Secular worldview",
+      "answers": [
+        "a.rel.1.d",
+        "a.rel.2.d",
+        "a.rel.3.d",
+        "a.rel.4.d",
+        "a.rel.5.d",
+        "a.rel.6.d",
+        "a.rel.7.c",
+        "a.rel.8.d"
+      ],
+      "sets": []
+    },
+    {
+      "id": "bs.soc.progressive",
+      "root": false,
+      "name": "Social progressivism",
+      "answers": [
+        "a.soc.1.b",
+        "a.soc.2.d",
+        "a.soc.3.a",
+        "a.soc.4.b",
+        "a.soc.5.a",
+        "a.soc.6.b",
+        "a.soc.7.b",
+        "a.soc.8.b"
+      ],
+      "sets": []
+    },
+    {
+      "id": "bs.soc.centrist",
+      "root": false,
+      "name": "Social centrism",
+      "answers": [
+        "a.soc.1.c",
+        "a.soc.2.c",
+        "a.soc.3.b",
+        "a.soc.4.c",
+        "a.soc.5.c",
+        "a.soc.6.c",
+        "a.soc.7.c",
+        "a.soc.8.b"
+      ],
+      "sets": []
+    },
+    {
+      "id": "bs.soc.traditional",
+      "root": false,
+      "name": "Social traditionalism",
+      "answers": [
+        "a.soc.1.c",
+        "a.soc.2.a",
+        "a.soc.3.d",
+        "a.soc.4.d",
+        "a.soc.5.d",
+        "a.soc.6.a",
+        "a.soc.7.d",
+        "a.soc.8.a"
+      ],
+      "sets": []
+    },
+    {
+      "id": "bs2.progressive-secular",
+      "root": false,
+      "name": "Progressive & Secular",
+      "answers": [],
+      "sets": [
+        "bs.eco.progressive",
+        "bs.rel.secular"
+      ]
+    },
+    {
+      "id": "bs2.market-traditional",
+      "root": false,
+      "name": "Market & Traditional",
+      "answers": [],
+      "sets": [
+        "bs.eco.conservative",
+        "bs.soc.traditional"
+      ]
+    },
+    {
+      "id": "bs2.liberal-secular",
+      "root": false,
+      "name": "Liberal & Secular",
+      "answers": [],
+      "sets": [
+        "bs.pol.liberal",
+        "bs.rel.secular"
+      ]
+    },
+    {
+      "id": "bs2.order-faith",
+      "root": false,
+      "name": "Order & Faith",
+      "answers": [],
+      "sets": [
+        "bs.pol.authoritarian",
+        "bs.rel.devout"
+      ]
+    },
+    {
+      "id": "b.social-democrat",
+      "root": true,
+      "name": "Social Democrat",
+      "answers": [],
+      "sets": [
+        "bs.eco.progressive",
+        "bs.pol.liberal",
+        "bs.rel.secular",
+        "bs.soc.progressive",
+        "bs.canon"
+      ]
+    },
+    {
+      "id": "b.progressive-left",
+      "root": true,
+      "name": "Progressive Left",
+      "answers": [],
+      "sets": [
+        "bs2.progressive-secular",
+        "bs.pol.liberal",
+        "bs.soc.progressive"
+      ]
+    },
+    {
+      "id": "b.classical-liberal",
+      "root": true,
+      "name": "Classical Liberal",
+      "answers": [],
+      "sets": [
+        "bs.eco.conservative",
+        "bs.pol.liberal",
+        "bs.rel.secular",
+        "bs.soc.centrist",
+        "bs.canon"
+      ]
+    },
+    {
+      "id": "b.libertarian",
+      "root": true,
+      "name": "Libertarian",
+      "answers": [],
+      "sets": [
+        "bs.eco.conservative",
+        "bs2.liberal-secular",
+        "bs.soc.progressive",
+        "bs.canon"
+      ]
+    },
+    {
+      "id": "b.conservative",
+      "root": true,
+      "name": "Conservative",
+      "answers": [],
+      "sets": [
+        "bs2.market-traditional",
+        "bs.pol.authoritarian",
+        "bs.rel.devout",
+        "bs.canon"
+      ]
+    },
+    {
+      "id": "b.religious-conservative",
+      "root": true,
+      "name": "Religious Conservative",
+      "answers": [],
+      "sets": [
+        "bs.eco.centrist",
+        "bs2.order-faith",
+        "bs.soc.traditional"
+      ]
+    },
+    {
+      "id": "b.nationalist",
+      "root": true,
+      "name": "Nationalist",
+      "answers": [],
+      "sets": [
+        "bs.eco.centrist",
+        "bs.pol.authoritarian",
+        "bs.rel.devout",
+        "bs.soc.traditional"
+      ]
+    },
+    {
+      "id": "b.centrist",
+      "root": true,
+      "name": "Centrist",
+      "answers": [],
+      "sets": [
+        "bs.eco.centrist",
+        "bs.pol.centrist",
+        "bs.rel.moderate",
+        "bs.soc.centrist",
+        "bs.canon"
+      ]
+    },
+    {
+      "id": "b.green-progressive",
+      "root": true,
+      "name": "Green Progressive",
+      "answers": [],
+      "sets": [
+        "bs2.progressive-secular",
+        "bs.pol.centrist",
+        "bs.soc.progressive",
+        "bs.canon"
+      ]
+    },
+    {
+      "id": "b.religious-left",
+      "root": true,
+      "name": "Religious Left",
+      "answers": [],
+      "sets": [
+        "bs.eco.progressive",
+        "bs.rel.devout",
+        "bs.soc.centrist"
+      ]
+    },
+    {
+      "id": "b.market-traditionalist",
+      "root": true,
+      "name": "Market Traditionalist",
+      "answers": [],
+      "sets": [
+        "bs2.market-traditional",
+        "bs.rel.devout"
+      ]
+    },
+    {
+      "id": "b.secular-centrist",
+      "root": true,
+      "name": "Secular Centrist",
+      "answers": [],
+      "sets": [
+        "bs2.liberal-secular",
+        "bs.eco.centrist",
+        "bs.soc.centrist"
+      ]
+    },
+    {
+      "id": "b.populist-left",
+      "root": true,
+      "name": "Populist Left",
+      "answers": [],
+      "sets": [
+        "bs.eco.progressive",
+        "bs.pol.authoritarian",
+        "bs.soc.progressive"
+      ]
+    },
+    {
+      "id": "b.populist-right",
+      "root": true,
+      "name": "Populist Right",
+      "answers": [],
+      "sets": [
+        "bs.eco.conservative",
+        "bs.pol.authoritarian",
+        "bs.soc.traditional"
+      ]
+    },
+    {
+      "id": "b.communitarian",
+      "root": true,
+      "name": "Communitarian",
+      "answers": [],
+      "sets": [
+        "bs.eco.centrist",
+        "bs.soc.traditional",
+        "bs.rel.moderate"
+      ]
+    },
+    {
+      "id": "b.moderate-pluralist",
+      "root": true,
+      "name": "Moderate Pluralist",
+      "answers": [],
+      "sets": [
+        "bs2.liberal-secular",
+        "bs2.progressive-secular"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "id": "u.0",
+      "walletIndex": 0,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.social-democrat"
+      }
+    },
+    {
+      "id": "u.1",
+      "walletIndex": 1,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.progressive-left"
+      }
+    },
+    {
+      "id": "u.2",
+      "walletIndex": 2,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.classical-liberal"
+      }
+    },
+    {
+      "id": "u.3",
+      "walletIndex": 3,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.libertarian"
+      }
+    },
+    {
+      "id": "u.4",
+      "walletIndex": 4,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.conservative"
+      }
+    },
+    {
+      "id": "u.5",
+      "walletIndex": 5,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.religious-conservative"
+      }
+    },
+    {
+      "id": "u.6",
+      "walletIndex": 6,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.nationalist"
+      }
+    },
+    {
+      "id": "u.7",
+      "walletIndex": 7,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.centrist"
+      }
+    },
+    {
+      "id": "u.8",
+      "walletIndex": 8,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.green-progressive"
+      }
+    },
+    {
+      "id": "u.9",
+      "walletIndex": 9,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.religious-left"
+      }
+    },
+    {
+      "id": "u.10",
+      "walletIndex": 10,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.market-traditionalist"
+      }
+    },
+    {
+      "id": "u.11",
+      "walletIndex": 11,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.secular-centrist"
+      }
+    },
+    {
+      "id": "u.12",
+      "walletIndex": 12,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.populist-left"
+      }
+    },
+    {
+      "id": "u.13",
+      "walletIndex": 13,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.populist-right"
+      }
+    },
+    {
+      "id": "u.14",
+      "walletIndex": 14,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.communitarian"
+      }
+    },
+    {
+      "id": "u.15",
+      "walletIndex": 15,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "belief",
+        "ref": "b.moderate-pluralist"
+      }
+    },
+    {
+      "id": "u.16",
+      "walletIndex": 16,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "unit",
+        "ref": "u.0"
+      }
+    },
+    {
+      "id": "u.17",
+      "walletIndex": 17,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "unit",
+        "ref": "u.4"
+      }
+    },
+    {
+      "id": "u.18",
+      "walletIndex": 18,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "unit",
+        "ref": "u.8"
+      }
+    },
+    {
+      "id": "u.19",
+      "walletIndex": 19,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "unit",
+        "ref": "u.12"
+      }
+    },
+    {
+      "id": "u.20",
+      "walletIndex": 20,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "unit",
+        "ref": "u.16"
+      }
+    },
+    {
+      "id": "u.21",
+      "walletIndex": 21,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "unit",
+        "ref": "u.1"
+      }
+    },
+    {
+      "id": "u.22",
+      "walletIndex": 22,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "unit",
+        "ref": "u.5"
+      }
+    },
+    {
+      "id": "u.23",
+      "walletIndex": 23,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "none",
+        "ref": null
+      }
+    },
+    {
+      "id": "u.24",
+      "walletIndex": 24,
+      "createViaMaster": true,
+      "pointer": {
+        "type": "none",
+        "ref": null
+      }
+    }
+  ]
+}

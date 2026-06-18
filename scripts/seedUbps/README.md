@@ -49,6 +49,25 @@ current balance; with `--file`, also the **required** TON (worst-case estimate) 
 `--file` it prints just the deployer address + balance. Needs `MNEMONIC`/`PRIVATE_KEY`
 (deployer) and, to list user wallets, `TEST_USERS_SEED`.
 
+## UBPS Canon (`--include`)
+
+The **UBPS Canon** — the five locked canonical Question→Answer pairs plus the single
+canonical BeliefSet `bs.canon` (`name: "UBPS Canon"`) — ships as a reusable seed
+**fragment** [`canon.json`](./canon.json). A user's final Belief declares UBPS
+membership by listing `"bs.canon"` in its `sets[]`. Pull the fragment into any seed
+with `--include` (repeatable; merge is by id and **idempotent**, so ids already in the
+seed are skipped):
+
+```bash
+pnpm seed:ubps:dry \
+  --file scripts/seedUbps/examples/ubps-seed-small-canon.testnet.json \
+  --include scripts/seedUbps/canon.json
+```
+
+The canon strings are **address-determining — do not edit them.** Full convention docs
+(the `Y|N|0|other` answer alphabet, the "shift via `A("0")` then the real `A`" rule,
+and the membership pattern) are in [`CANON.md`](./CANON.md).
+
 ## Environment
 
 | Var | Purpose |

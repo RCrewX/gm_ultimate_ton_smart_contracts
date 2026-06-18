@@ -1,0 +1,37 @@
+{
+  "ubpsSeedFragment": 1,
+  "meta": {
+    "description": "UBPS Canon — the LOCKED canonical Question->Answer pairs + the single canonical BeliefSet (bs.canon, name 'UBPS Canon'). A reusable seed fragment: merge it into any seed with `--include scripts/seedUbps/canon.json`, then a user's final Belief lists \"bs.canon\" in sets[] to signal UBPS membership. The 5 strings are ADDRESS-DETERMINING — do not change them. See CANON.md.",
+    "generator": "manual",
+    "locked": true
+  },
+  "questions": [
+    { "id": "q.canon.member", "text": "I am a part of UBPS." },
+    { "id": "q.canon.answerwriting", "text": "I use Canonical answer writing: [Y-yes|N-no|0-empty|other]." },
+    { "id": "q.canon.terms", "text": "I use Canonical terms (U|Q|A|BS)" },
+    { "id": "q.canon.bsinvalid", "text": "I consider BS invalid if there are different A for similar Q." },
+    { "id": "q.canon.shift", "text": "I consider shift firstly to A(\"0\") and then to A as canonical BS shift." }
+  ],
+  "answers": [
+    { "id": "a.canon.member.yes", "question": "q.canon.member", "text": "Yes." },
+    { "id": "a.canon.answerwriting.y", "question": "q.canon.answerwriting", "text": "Y" },
+    { "id": "a.canon.terms.y", "question": "q.canon.terms", "text": "Y" },
+    { "id": "a.canon.bsinvalid.y", "question": "q.canon.bsinvalid", "text": "Y" },
+    { "id": "a.canon.shift.y", "question": "q.canon.shift", "text": "Y" }
+  ],
+  "beliefSets": [
+    {
+      "id": "bs.canon",
+      "root": false,
+      "name": "UBPS Canon",
+      "answers": [
+        "a.canon.member.yes",
+        "a.canon.answerwriting.y",
+        "a.canon.terms.y",
+        "a.canon.bsinvalid.y",
+        "a.canon.shift.y"
+      ],
+      "sets": []
+    }
+  ]
+}
