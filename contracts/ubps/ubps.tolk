@@ -21,6 +21,20 @@ type AllowedMessagesToUBPS =
     | ReturnExcessesBack
     | LiteralyAnything
 
+// Return the operation's unspent remainder to the payer. Called AFTER reserveValue()
+// (which kept our prior balance + storage tax) and AFTER the fixed-budget child send, so
+// mode-128 here sweeps exactly what is left — the over-funding that previously stranded
+// on the child. Gated to in.senderAddress by every caller (the create-op cashback rule).
+fun refundExcessToPayer(payer: address) {
+    val refund = createMessage({
+        bounce: BounceMode.NoBounce,
+        dest: payer,
+        value: 0,
+        body: ReturnExcessesBack { queryId: 0 },
+    });
+    refund.send(SEND_MODE_CARRY_ALL_REMAINING_BALANCE);
+}
+
 fun onInternalMessage(in: InMessage) {
     val msg = lazy AllowedMessagesToUBPS.fromSlice(in.body);
     var storage = lazy UBPSStorage.load();
@@ -45,10 +59,11 @@ fun onInternalMessage(in: InMessage) {
             val out = createMessage({
                 bounce: BounceMode.NoBounce,
                 dest: calcQuestionDeploy(contract.getAddress(), msg.questionId, storage.questionCode),
-                value: 0,
+                value: UBPS_CHILD_DEPLOY_VALUE,   // fixed deploy budget — no longer carry-all
                 body: activate,
             });
-            out.send(SEND_MODE_CARRY_ALL_REMAINING_BALANCE);
+            out.send(SEND_MODE_PAY_FEES_SEPARATELY);
+            refundExcessToPayer(in.senderAddress);  // return the remainder; nothing stranded
         }
 
         // ---- Activate an Answer bound to a Question ----
@@ -65,10 +80,11 @@ fun onInternalMessage(in: InMessage) {
             val out = createMessage({
                 bounce: BounceMode.NoBounce,
                 dest: calcAnswerDeploy(contract.getAddress(), msg.questionAddress, msg.answerId, storage.answerCode),
-                value: 0,
+                value: UBPS_CHILD_DEPLOY_VALUE,   // fixed deploy budget — no longer carry-all
                 body: activate,
             });
-            out.send(SEND_MODE_CARRY_ALL_REMAINING_BALANCE);
+            out.send(SEND_MODE_PAY_FEES_SEPARATELY);
+            refundExcessToPayer(in.senderAddress);  // return the remainder; nothing stranded
         }
 
         // ---- Create a BeliefSet (root=false) or final B (root=true) ----
@@ -92,10 +108,11 @@ fun onInternalMessage(in: InMessage) {
             val out = createMessage({
                 bounce: BounceMode.NoBounce,
                 dest: calcBeliefSetDeploy(contract.getAddress(), index, storage.beliefSetCode),
-                value: 0,
+                value: UBPS_CHILD_DEPLOY_VALUE,   // fixed deploy budget — no longer carry-all
                 body: populate,
             });
-            out.send(SEND_MODE_CARRY_ALL_REMAINING_BALANCE);
+            out.send(SEND_MODE_PAY_FEES_SEPARATELY);
+            refundExcessToPayer(in.senderAddress);  // return the remainder; nothing stranded
         }
 
         // ---- Create a Unit through the master (alternate funnel; user owns it) ----
@@ -110,17 +127,18 @@ fun onInternalMessage(in: InMessage) {
             val out = createMessage({
                 bounce: BounceMode.NoBounce,
                 dest: calcUnitDeploy(contract.getAddress(), in.senderAddress, storage.unitCode),
-                value: 0,
+                value: UBPS_CHILD_DEPLOY_VALUE,   // fixed deploy budget — no longer carry-all
                 body: initPtr,
             });
-            out.send(SEND_MODE_CARRY_ALL_REMAINING_BALANCE);
+            out.send(SEND_MODE_PAY_FEES_SEPARATELY);
+            refundExcessToPayer(in.senderAddress);  // return the remainder; nothing stranded
         }
 
         ReturnExcessesBack => {
-            reserveValue(in.valueCoins);
+            // terminal catch-all (sends nothing): the master absorbs the value.
         }
         LiteralyAnything => {
-            reserveValue(in.valueCoins);
+            // terminal catch-all (sends nothing): the master absorbs the value.
         }
         else => {
             assert (in.body.isEmpty()) throw 0xFFFF

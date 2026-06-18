@@ -9,7 +9,7 @@ import {
     Sender,
     SendMode,
 } from '@ton/core';
-import { BeliefSetConfig, beliefSetConfigToCell } from './types';
+import { BeliefSetConfig, beliefSetConfigToCell, encodeTraverseUp } from './types';
 
 // BeliefSet (BS) — storage { ubpsMaster, bsIndex, created, root, aCount, bsCount,
 // aSet, bsSet } (static.tolk BeliefSetStorage). B = BS with root=true. Created once
@@ -33,6 +33,16 @@ export class BeliefSet implements Contract {
             value,
             sendMode: SendMode.PAY_GAS_SEPARATELY,
             body: beginCell().endCell(),
+        });
+    }
+
+    // Terminal of a UP chain: a BS that receives TraverseUp refunds origOwner. Exposed
+    // for tests that target a BS directly (normally a Unit forwards the message here).
+    async sendTraverseUp(provider: ContractProvider, via: Sender, value: bigint, origOwner: Address) {
+        await provider.internal(via, {
+            value,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: encodeTraverseUp(origOwner),
         });
     }
 

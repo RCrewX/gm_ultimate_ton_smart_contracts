@@ -92,6 +92,8 @@ import {
     UBPS_MAX_STRING_BYTES,
     UBPS_MAX_NAME_BYTES,
     UBPS_MIN_OP_VALUE,
+    UBPS_CHILD_DEPLOY_VALUE,
+    UBPS_UP_HOP_VALUE,
 } from '../wrappers/ubps/types';
 
 import {
@@ -178,7 +180,19 @@ import { SBTPrinterOp } from '../wrappers/printers/sbt_printer/SBTPrinter';
 // on-chain layout + the master/BS/Unit code-hashes change → BS/Unit/master ADDRESSES move
 // → a fresh deploy + re-seed are required. The games.ubps published shape (codes+addresses)
 // is otherwise unchanged.
-export const CONSTANTS_SCHEMA_VERSION = 7;
+// v8: UBPS gains an on-chain UP-traversal message-flow + right-sized op funding.
+// ADDED opcode under `opcodes.ubps`: `OP_TRAVERSE_UP` (0x55425031, to a Unit or a BS —
+// a Unit forwards it up its pointer chain carrying all remaining gas; a BS / empty-pointer
+// Unit is the terminal and refunds the body-supplied `origOwner`). NEW error `errors.ubps`
+// 610 ERR_UBPS_UP_VALUE_TOO_LOW (live-parsed). NEW `gasCosts.ubps` keys: UBPS_CHILD_DEPLOY_VALUE
+// (0.02 — fixed budget the master forwards to a deployed child) and UBPS_UP_HOP_VALUE (0.02 —
+// per-hop forward floor). CHANGED VALUE (not shape): UBPS_MIN_OP_VALUE 0.1 -> 0.05 — the master
+// no longer carry-alls the remainder onto the child (which stranded ~0.139/op); it forwards the
+// fixed child budget and refunds the rest to the payer. All 6 UBPS contract code-hashes change
+// (new handlers / send paths) → BS/Unit/Q/A/master ADDRESSES move → a fresh deploy + re-seed are
+// required (same as the v7 note). The address-DETERMINING storage layouts are UNCHANGED, so the
+// off-chain (master, keys) → address formula the uap consumer relies on still holds.
+export const CONSTANTS_SCHEMA_VERSION = 8;
 
 // ============================================================================
 // Serialisation helpers
@@ -353,6 +367,8 @@ export function buildGameConstants(): GameConstants {
             },
             ubps: {
                 UBPS_MIN_OP_VALUE: nano(UBPS_MIN_OP_VALUE),
+                UBPS_CHILD_DEPLOY_VALUE: nano(UBPS_CHILD_DEPLOY_VALUE),
+                UBPS_UP_HOP_VALUE: nano(UBPS_UP_HOP_VALUE),
             },
             tonRaceGame: {
                 GAS_COST_REQUEST_SHIP_ADDRESS: nano(GAS_COST_REQUEST_SHIP_ADDRESS),

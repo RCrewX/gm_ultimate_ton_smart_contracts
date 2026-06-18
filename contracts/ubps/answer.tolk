@@ -23,14 +23,14 @@ fun onInternalMessage(in: InMessage) {
             storage.answerBytes = msg.answerBytes;
             storage.active = true;
             storage.save();
-            reserveValue(in.valueCoins);
+            // terminal (sends nothing): the A keeps the small deploy budget as storage.
         }
 
         ReturnExcessesBack => {
-            reserveValue(in.valueCoins);
+            // terminal catch-all (sends nothing): the A absorbs the value.
         }
         LiteralyAnything => {
-            reserveValue(in.valueCoins);
+            // terminal catch-all (sends nothing): the A absorbs the value.
         }
         else => {
             assert (in.body.isEmpty()) throw 0xFFFF

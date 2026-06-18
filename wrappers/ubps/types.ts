@@ -17,7 +17,18 @@ export const BASIC_STORAGE_TAX = toNano('0.01');
 export const MAX_A = 100;
 export const MAX_BS = 20;
 
-export const UBPS_MIN_OP_VALUE = toNano('0.1');
+// Right-sized 2026-06-18 (was 0.1 — it stranded ~0.139 on every deployed child). The
+// master now forwards UBPS_CHILD_DEPLOY_VALUE to the child and refunds the rest to the
+// payer, so an op costs ~0.03–0.04 TON. Keep in sync with static.tolk.
+export const UBPS_MIN_OP_VALUE = toNano('0.05');
+
+// Fixed budget the master forwards to a freshly-deployed child (Q/A/BS/Unit); the child
+// keeps it as storage and the master returns the remainder to the payer.
+export const UBPS_CHILD_DEPLOY_VALUE = toNano('0.02');
+
+// UP-traversal one-hop floor: the minimum inbound value a Unit needs to forward
+// TraverseUp one more hop. The initiator funds UBPS_UP_HOP_VALUE × maxDepth up front.
+export const UBPS_UP_HOP_VALUE = toNano('0.02');
 
 // Question/Answer strings must be a single byte-aligned cell so the on-chain
 // SHA256U (slice.bitsHash) matches the off-chain sha256 of the UTF-8 bytes.
@@ -41,6 +52,8 @@ export const Opcodes = {
     OP_INIT_UNIT_POINTER: 0x55425014,
     // to a Unit
     OP_SET_POINTER: 0x55425021,
+    // UP traversal (to a Unit or a BS)
+    OP_TRAVERSE_UP: 0x55425031,
     // shared excess / catch-all
     OP_RETURN_EXCESSES_BACK: 0xd53276db,
     OP_LITERALY_ANYTHING: 0x0a1b2c3d,
@@ -57,6 +70,7 @@ export const Errors = {
     ERR_UBPS_VALUE_TOO_LOW: 607,
     ERR_UBPS_NOT_MASTER: 608,
     ERR_UBPS_BAD_STRING_CELL: 609,
+    ERR_UBPS_UP_VALUE_TOO_LOW: 610,
 } as const;
 
 // -----------------------------------------------------------------------------
@@ -254,6 +268,16 @@ export function encodeSetPointer(up: Address | null): Cell {
     return beginCell()
         .storeUint(Opcodes.OP_SET_POINTER, 32)
         .storeAddress(up)
+        .endCell();
+}
+
+// UP traversal: walk the pointer chain (owner -> Unit -> ... -> Unit -> BS) and refund
+// `origOwner` at the terminal. Sent by the initiator to their own Unit; each Unit forwards
+// the SAME body to its `up` carrying all remaining gas. `origOwner` is the refund target.
+export function encodeTraverseUp(origOwner: Address): Cell {
+    return beginCell()
+        .storeUint(Opcodes.OP_TRAVERSE_UP, 32)
+        .storeAddress(origOwner)
         .endCell();
 }
 

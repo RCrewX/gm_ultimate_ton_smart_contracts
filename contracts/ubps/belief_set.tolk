@@ -11,8 +11,14 @@ import "static"
 
 type AllowedMessagesToBeliefSet =
     | PopulateBeliefSet
+    | TraverseUp
     | ReturnExcessesBack
     | LiteralyAnything
+
+// A BS is the terminal of a UP chain, so it never forwards and so never produces a
+// bounceable hop; but a refund to origOwner is NoBounce too. Define an absorbing
+// bounce handler anyway for safety (nothing to undo — BS state is immutable here).
+fun onBouncedMessage(in: InMessageBounced) {}
 
 fun onInternalMessage(in: InMessage) {
     val msg = lazy AllowedMessagesToBeliefSet.fromSlice(in.body);
@@ -32,14 +38,28 @@ fun onInternalMessage(in: InMessage) {
             storage.bsSet = msg.bsSet;
             storage.name = msg.name;       // optional display name, set once (immutable)
             storage.save();
+            // terminal (sends nothing): the BS keeps the small deploy budget as storage.
+        }
+
+        // UP traversal TERMINAL: a BS is the end of the chain. Edit nothing; refund the
+        // original initiator (origOwner) with the leftover, keeping our prior balance +
+        // storage tax. NoBounce — origOwner is a wallet that accepts the cashback.
+        TraverseUp => {
             reserveValue(in.valueCoins);
+            val refund = createMessage({
+                bounce: BounceMode.NoBounce,
+                dest: msg.origOwner,
+                value: 0,
+                body: ReturnExcessesBack { queryId: 0 },
+            });
+            refund.send(SEND_MODE_CARRY_ALL_REMAINING_BALANCE);
         }
 
         ReturnExcessesBack => {
-            reserveValue(in.valueCoins);
+            // terminal catch-all (sends nothing): the BS absorbs the value.
         }
         LiteralyAnything => {
-            reserveValue(in.valueCoins);
+            // terminal catch-all (sends nothing): the BS absorbs the value.
         }
         else => {
             assert (in.body.isEmpty()) throw 0xFFFF

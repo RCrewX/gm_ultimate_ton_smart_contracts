@@ -24,9 +24,25 @@ const SEND_MODE_CARRY_ALL_REMAINING_BALANCE: uint8 = 128;
 const MAX_A: int = 100;    // max atomic beliefs (A addresses) in one BS/B
 const MAX_BS: int = 20;    // max nested sets (BS addresses) in one BS/B
 
-// Minimum TON to fund a master operation (a single child deploy + the activation
-// message hop + cashback). Operations carry-all the remainder onward.
-const UBPS_MIN_OP_VALUE: coins = ton("0.1");
+// Minimum TON to fund a master operation. Budget breakdown (right-sized 2026-06-18):
+//   UBPS_CHILD_DEPLOY_VALUE (0.02)  — the fixed budget forwarded to the deployed child
+//   + master compute/fwd gas (~0.01) + the master's own storage tax (0.01)
+//   ≈ 0.04 worst case, so a 0.05 floor leaves a small refundable remainder.
+// The master no longer carry-alls the remainder onto the child (which stranded it):
+// it forwards UBPS_CHILD_DEPLOY_VALUE and refunds the rest to the payer (in.senderAddress).
+const UBPS_MIN_OP_VALUE: coins = ton("0.05");
+
+// Fixed budget the master forwards to a freshly-deployed child (Q/A/BS/Unit). NOT a
+// carry-all: the child keeps this as its storage balance; the master returns the rest
+// to the payer. Small because a child only stores a few cells past the storage tax.
+const UBPS_CHILD_DEPLOY_VALUE: coins = ton("0.02");
+
+// UP traversal one-hop floor: the minimum inbound value a Unit requires before it will
+// forward TraverseUp one more hop (covers that hop's fwd fee + compute gas). The
+// initiating owner funds UBPS_UP_HOP_VALUE × maxExpectedDepth up front; each hop carries
+// all remaining gas onward, so a chain that runs short simply asserts-and-stops (a follow
+// cycle is bounded by gas, never an infinite loop — see unit.tolk TraverseUp).
+const UBPS_UP_HOP_VALUE: coins = ton("0.02");
 
 // =============================================================================
 //  Errors — UBPS's own range (600..619), distinct from GM (900s), SSM (940s),
@@ -42,6 +58,7 @@ const ERR_UBPS_INVALID_OWNER_SENDER = 606;  // Unit SetPointer not from the unit
 const ERR_UBPS_VALUE_TOO_LOW = 607;         // operation underfunded
 const ERR_UBPS_NOT_MASTER = 608;            // child activation/creation not from the master
 const ERR_UBPS_BAD_STRING_CELL = 609;       // Q/A string cell has refs (must be a single byte-aligned cell)
+const ERR_UBPS_UP_VALUE_TOO_LOW = 610;      // TraverseUp arrived with too little gas to forward one more hop
 
 // =============================================================================
 //  Storage
@@ -295,6 +312,21 @@ struct (0x55425014) InitUnitPointer {
 // Set/clear the single Unit Pointer. up=null clears it. NO membership check.
 struct (0x55425021) SetPointer {
     up: address?
+}
+
+// =============================================================================
+//  Inbound message body — UP traversal (TO a Unit or a BS)
+// =============================================================================
+
+// Walk the UP (Unit Pointer) chain on-chain: owner -UP-> Unit -UP-> ... -UP-> BS.
+// A Unit that receives this forwards the SAME body to its own `up` (carrying all
+// remaining gas), editing NOTHING; a BS (or a Unit with an empty pointer) is the
+// terminal and refunds `origOwner` with the leftover. `origOwner` is the address to
+// refund at the end — body-supplied and SAFE: the initiator funds their own gas, so
+// spoofing it only redirects the spoofer's own leftover (it is NOT the create-op
+// cashback, which stays gated to in.senderAddress).
+struct (0x55425031) TraverseUp {
+    origOwner: address
 }
 
 // =============================================================================
