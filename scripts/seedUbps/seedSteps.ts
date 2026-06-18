@@ -56,7 +56,12 @@ import {
 } from './resolve';
 
 // --- tunable amounts ---
-const OP_VALUE = toNano('0.15');           // activate Q / A, create BS (>= UBPS_MIN_OP_VALUE 0.1)
+// activate Q / A, create BS. Floor is UBPS_MIN_OP_VALUE = 0.05 (contracts/ubps/static.tolk).
+// The master forwards UBPS_CHILD_DEPLOY_VALUE (0.02) to the child, spends ~0.02 on its own
+// gas+storage tax, and REFUNDS the excess back to the payer — so over-fronting only parks
+// TON in-flight, it isn't lost. We front floor + ~10% (matches the uap UBPS buffer); the
+// remainder returns. Keep this ABOVE 0.05 or every op asserts ERR_UBPS_VALUE_TOO_LOW (607).
+const OP_VALUE = toNano('0.055');
 const UNIT_DEPLOY_VALUE = toNano('0.1');   // self-deploy a Unit
 const CREATE_UNIT_VALUE = toNano('0.15');  // create a Unit via the master (deploy + initial pointer hop)
 const SET_POINTER_VALUE = toNano('0.1');   // SetPointer
