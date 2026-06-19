@@ -121,7 +121,7 @@ Tokens module:
   --amount <raw>        Raw units minted per token (default 1000000; jettons are 0-decimal 1:1).
 
 Race module (ton_race_game):
-  --pilots <n>          Pilot ships (default 3). EXPENSIVE: ~16 TON each (~48 TON for 3).
+  --pilots <n>          Pilot ships (default 3). ~2.8 TON each (~8.5 TON for 3 @10 moves; move value recycles).
   --moves <n>           Normal moves per pilot (default 10) — opens the first n cells of its lane.
   --directions L,U,R    Lanes, one per pilot cyclically (default LEFT,UP,RIGHT).
   --pilot-index-base <n>  Wallet-index namespace offset (default 1000; keeps pilots off UBPS users).
@@ -189,7 +189,7 @@ async function main(): Promise<void> {
         console.log(`  - ${name}: ~${fmtTon(est.required)} TON  ${JSON.stringify(est.breakdown)}`);
     }
     console.log(`  => TOTAL required: ~${fmtTon(total)} TON (worst case; a resume skips already-seeded work)`);
-    if (need.race) console.log('  NOTE: the race module dominates the cost (~16 TON/pilot of testnet TON).');
+    if (need.race) console.log('  NOTE: race dominates the cost (~2.8 TON/pilot @10 moves); the per-move value recycles via wallet cashback, so most of the hold is recoverable.');
 
     if (!cli.dryRun) {
         if (!deployer || !prov) throw new Error('Live run needs MNEMONIC/PRIVATE_KEY + RPC.');

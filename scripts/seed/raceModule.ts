@@ -15,8 +15,13 @@
  * done) is the resume signal — a re-run skips an already-deployed ship and continues from
  * the right move count. NORMAL moves only.
  *
- * COST: per pilot ≈ deploy(5) + moves×1 + buffer ≈ ~16 TON; 3 pilots ≈ ~48 TON of TESTNET
- * TON from the deployer. The runner's preflight makes this explicit. Scale with --pilots/--moves.
+ * COST: the move is a WALLET-signed RequestToMove (ship.tolk runMove isSessionMove=false) —
+ * its MoveEnd refunds the unspent value to the PILOT WALLET, so the attached value RECYCLES
+ * between sequential moves (only gas burned + a freshly-opened cell's storage is consumed).
+ * The hold-requirement is therefore ship deploy + a small working-capital + moves×net-burn,
+ * NOT moves×(full attach): ≈ ~2.8 TON/pilot, ~8.5 TON for 3 pilots×10 moves (sandbox-measured
+ * real consumption is ~1.2 TON/pilot; the rest is safety cushion). See pilotFunding().
+ * The runner's preflight reports this. Scale with --pilots/--moves.
  */
 import { Address, Cell, toNano } from '@ton/core';
 import { Ship } from '../../wrappers/ton_race_game/Ship';
@@ -28,10 +33,57 @@ import {
     SeedContext, SeedOptions, SeedModule, CostEstimate, ManifestPart, fmtAddr, fmtTon, writeManifest,
 } from './lib/context';
 
-// --- tunable amounts ---
-const SHIP_DEPLOY_VALUE = toNano('5');       // self-deploy a Ship (matches tests/test_utils.ts)
-const MOVE_VALUE = toNano('1');              // GAS_COST_SEND_MOVE — per normal move
-const RACE_PILOT_BUFFER = toNano('1');       // headroom per pilot wallet
+// --- funding model — anchored to contracts/ton_race_game/static/constants.tolk ---
+// The contract is the single source of truth; the GAS_COST_* below MIRROR it (same figures —
+// keep in sync if the contract changes). The seeder moves via the WALLET-signed RequestToMove
+// path: ship.tolk runMove(…, isSessionMove=false) forwards (value − tax) down the move chain,
+// and MoveEnd refunds the unspent remainder to the PILOT WALLET (cashback_to_ship=false). So
+// each move's attached value RECYCLES between sequential moves — only the gas burned plus the
+// storage a freshly-opened coordinate cell locks is actually CONSUMED per move. The deployer
+// hold-requirement is thus ship-deploy + small working-capital + moves×net-burn, NOT moves×attach.
+const GAS_COST_REQUEST_TO_MOVE = toNano('0.06');
+const GAS_COST_MOVE_SHIP_TO_CC = toNano('0.12');
+const GAS_COST_MOVE = toNano('0.12');
+const GAS_COST_MOVE_END = toNano('0.06');
+// Full wallet-move chain gas (Ship→CC→…→MoveEnd) — buffered MAX figures from the contract.
+const PER_MOVE_GAS = GAS_COST_REQUEST_TO_MOVE + GAS_COST_MOVE_SHIP_TO_CC + GAS_COST_MOVE + GAS_COST_MOVE_END; // 0.36
+
+// Value ATTACHED to each move: full-chain gas × 1.5 margin (well above the contract's
+// TODO_TOTAL_GAS_TO_MOVE = 0.19 floor). The unspent part cashes back to the pilot wallet, so a
+// generous attach does NOT inflate the hold-requirement — it just round-trips.
+const MOVE_VALUE = (PER_MOVE_GAS * 3n) / 2n;          // 0.54 TON  (was 1 — over-attached; excess merely recycled)
+
+// Net TON actually CONSUMED per move (gas burned + new-cell storage lock; the rest cashes back).
+// Sandbox-measured in tests/seed/race-seeder.spec.ts at ~0.09 TON/move (deploy + 10 moves burned
+// ~1.18 TON total); set to ~1.7× that for margin.
+const NET_MOVE_COST = toNano('0.15');
+
+// Ship self-deploy value: deploy gas + ship storage floor. The contract requires the ship's
+// balance ≥ GAS_COST_REQUEST_TO_MOVE + GAS_COST_MOVE_SHIP_TO_CC (0.18) to move; 0.3 covers deploy
+// + a moving floor. (test_utils.ts uses a generous 5 as a TEST value — NOT a hold figure to copy.)
+const SHIP_DEPLOY_VALUE = toNano('0.3');
+
+// Per-pilot working capital: keep one move's attach in flight so the wallet can always fund the
+// next move before the prior MoveEnd cashback has fully landed, plus a small headroom buffer.
+const RACE_PILOT_WORKING_CAPITAL = MOVE_VALUE;        // 0.54 TON (one move in flight)
+const RACE_PILOT_BUFFER = toNano('0.5');              // headroom per pilot wallet
+
+/**
+ * Deployer hold-requirement to seed ONE pilot performing `remaining` moves. The move value
+ * recycles (wallet cashback), so this is deploy(once) + working-capital + remaining×net-burn +
+ * buffer — NOT remaining×MOVE_VALUE. Shared by estimateCost, run(), and the sandbox spec so the
+ * funding model has a single definition. ~5 TON/pilot @10 moves; ~15 TON for 3 pilots.
+ */
+export function pilotFunding(remaining: number, needsDeploy: boolean): bigint {
+    return (needsDeploy ? SHIP_DEPLOY_VALUE : 0n)
+        + RACE_PILOT_WORKING_CAPITAL
+        + NET_MOVE_COST * BigInt(remaining)
+        + RACE_PILOT_BUFFER;
+}
+
+/** Exposed for the sandbox spec to assert against the exact per-move attach the seeder uses. */
+export const RACE_MOVE_VALUE = MOVE_VALUE;
+export const RACE_SHIP_DEPLOY_VALUE = SHIP_DEPLOY_VALUE;
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
@@ -104,7 +156,8 @@ export const raceModule: SeedModule = {
     name: 'race',
 
     async estimateCost(_ctx: SeedContext, opts: SeedOptions): Promise<CostEstimate> {
-        const perPilot = SHIP_DEPLOY_VALUE + MOVE_VALUE * BigInt(opts.moves) + RACE_PILOT_BUFFER;
+        // Worst case (nothing seeded yet): every pilot needs a fresh ship + all moves.
+        const perPilot = pilotFunding(opts.moves, true);
         const required = perPilot * BigInt(opts.pilots);
         return {
             required,
@@ -112,7 +165,7 @@ export const raceModule: SeedModule = {
                 pilots: String(opts.pilots),
                 movesEach: String(opts.moves),
                 perPilot: `${fmtTon(perPilot)} TON`,
-                total: `${fmtTon(required)} TON  (testnet TON — the expensive seeder)`,
+                total: `${fmtTon(required)} TON  (testnet TON — move value recycles via wallet cashback)`,
             },
         };
     },
@@ -153,7 +206,7 @@ export const raceModule: SeedModule = {
             const gd = await getGameData(prov, live, ship.address);
             const alreadyDone = movesDoneFrom(gd);
             const remaining = Math.max(0, opts.moves - alreadyDone);
-            const requirement = (shipActive ? 0n : SHIP_DEPLOY_VALUE) + MOVE_VALUE * BigInt(remaining) + RACE_PILOT_BUFFER;
+            const requirement = pilotFunding(remaining, !shipActive);
 
             const entry: PilotManifestEntry = {
                 index: walletIndex,

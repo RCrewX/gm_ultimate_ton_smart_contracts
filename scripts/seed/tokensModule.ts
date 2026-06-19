@@ -24,10 +24,17 @@ import {
 } from './lib/context';
 
 // --- tunable amounts (per token) ---
-const MASTER_DEPLOY_VALUE = toNano('0.5');  // deploy a jetton master
+// Jetton-master deploy needs only deploy gas + the minter's storage floor (sandbox-measured
+// well under 0.1 TON; see tests/seed/tokens-seeder.spec.ts). 0.25 keeps a comfortable margin.
+const MASTER_DEPLOY_VALUE = toNano('0.25'); // deploy a jetton master (was 0.5 — generous)
 const MINT_FORWARD = toNano('0.1');         // forward TON carried to the recipient wallet
 const MINT_TOTAL = toNano('0.2');           // total TON for the mint (sendMint adds ~0.015 itself)
 const TOKEN_BUFFER = toNano('0.1');         // per-token fee headroom
+
+/** Exposed so the sandbox spec deploys with the exact value the live seeder uses. */
+export const TOKENS_MASTER_DEPLOY_VALUE = MASTER_DEPLOY_VALUE;
+export const TOKENS_MINT_FORWARD = MINT_FORWARD;
+export const TOKENS_MINT_TOTAL = MINT_TOTAL;
 
 /** Off-chain content URI for a labelled test token (label lives ONLY here, never on-chain as a name). */
 export function tokenContentUri(label: string): string {
