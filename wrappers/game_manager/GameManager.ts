@@ -9,6 +9,7 @@ import {
     encodeRevokeSbt,
     encodeEditNft,
     encodeEditSbt,
+    encodeSetPassportNickname,
     ForwardMintRequest,
     RequestBurn,
 } from './RetranslatorTypes';
@@ -173,6 +174,21 @@ export class GameManager implements Contract {
         content: Cell,
     ) {
         await this.sendR1(provider, via, value, encodeEditSbt({ itemAddress, content }));
+    }
+
+    /**
+     * Owner self-service nickname: R1-wrap a SetPassportNickname. The `via` sender is
+     * the passport OWNER — R* binds the write to this attested initiator, so it can only
+     * ever land on the sender's own passport(index). `content` = a Cell<SnakeString>.
+     */
+    async sendSetNickname(
+        provider: ContractProvider,
+        via: Sender,
+        value: bigint,
+        index: bigint | number,
+        content: Cell,
+    ) {
+        await this.sendR1(provider, via, value, encodeSetPassportNickname({ index, content }));
     }
 
     async sendRedirectMessage(

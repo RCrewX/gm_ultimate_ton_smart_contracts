@@ -14,6 +14,6 @@ const ERROR_SBTN_TRANSFER_FORBIDDEN = 967
 const ERROR_NOT_FROM_ADMIN = 968
 const ERROR_NOT_INITIALIZED = 969
 const ERROR_UNKNOWN_MESSAGE = 970
-// passport-specific: an OWNER write targeted a field that is NOT owner-writable for
-// this item's id (e.g. SetNickname on a non-core id). System-only by default (§3.4).
+// passport-specific: an OWNER-field write (SetPassportOwnerContent) targeted an item
+// whose id has NO owner-writable field (e.g. a non-core id). System-only by default (§3.4).
 const ERROR_FIELD_NOT_OWNER_WRITABLE = 971

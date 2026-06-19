@@ -303,8 +303,19 @@ struct (0x456e6674) EditNft {            // "Enft"
 }
 
 struct (0x45736274) EditSbt {            // "Esbt"
-    itemAddress: address                 // which SBT item to re-forge
-    content: cell                        // new Cell<SBTContent>; opaque to R*/GM
+    itemAddress: address                 // which passport item to re-forge (SYSTEM fields)
+    content: cell                        // new per-id SYSTEM content payload; opaque to R*/GM
+}
+
+// ---- Owner self-service passport nickname (id=0 OWNER field) -------------------
+// The ONE owner-requestable content write (§3.5). NO platform gate: any user may set
+// THEIR OWN nickname. R* binds the target to the GM-attested initiator (ownerAddress =
+// msg.initiator) so the request carries NO victim address — a cross-owner write is
+// UNREPRESENTABLE, a strictly stronger guarantee than runtime rejection. `content` is
+// an opaque Cell<SnakeString> (the nickname); R*/GM never parse it.
+struct (0x536e6963) SetPassportNickname {   // "Snic"
+    index: uint256                          // passport id (must be 0 CORE; item enforces)
+    content: cell                           // new Cell<SnakeString> nickname; opaque to R*/GM
 }
 
 // ---- ANVIL output bodies (R* builds them, packs into R3.data; GM emits as R4) ----
@@ -317,6 +328,17 @@ struct (0x00000006) PrinterEditNftItem {
 struct (0x00000007) PrinterEditPassportItem {
     queryId: uint64
     itemAddress: address
+    newContent: cell
+}
+
+// Owner-field (nickname) edit output body — mirrors universal_passport/messages.tolk
+// EditPassportOwnerContent. R* fills ownerAddress with the GM-attested initiator; the
+// collection DERIVES the item address from (ownerAddress, index), so the owner can only
+// reach their own passport.
+struct (0x00000008) PrinterEditPassportOwnerContent {
+    queryId: uint64
+    ownerAddress: address
+    index: uint256
     newContent: cell
 }
 
@@ -628,6 +650,7 @@ type AllowedRequests =
     | MintNft
     | MintSbt
     | RevokeSbt
+    | SetPassportNickname  // owner self-service nickname (id=0 OWNER field)
     | EditNft   // ⚒ ANVIL (opaque content edit, owner-only)
     | EditSbt   // ⚒ ANVIL (opaque content edit, owner-only)
     | AnvilCombine    // ⚒ ANVIL recipe engine (two-item)
@@ -961,6 +984,27 @@ fun onInternalMessage(in: InMessage) {
                     };
                     reserveValue(in.valueCoins);
                     emitR3(storage.gameManagerAddress, toolsInfo.passportPrinterAddress!, revokeItem.toCell());
+                }
+
+                // Owner self-service nickname write (id=0 OWNER field). The ONE
+                // owner-requestable content op (§3.5): NO platform gate — any user may
+                // set THEIR OWN nickname. R* binds the target to msg.initiator (the
+                // GM-attested requester); the collection derives the item address from
+                // (initiator, index), so the owner can only ever reach their own passport
+                // and a cross-owner write is unrepresentable. R* never parses `content`.
+                SetPassportNickname => {
+                    assert (storage.toolsInfo != null) throw ERR_TOOLS_INFO_NOT_SET;
+                    val toolsInfo = storage.toolsInfo!.load();
+                    assert (toolsInfo.passportPrinterAddress != null) throw ERR_PASSPORT_PRINTER_NOT_SET;
+
+                    val editOwner = PrinterEditPassportOwnerContent {
+                        queryId: 0,
+                        ownerAddress: msg.initiator,
+                        index: request.index,
+                        newContent: request.content,
+                    };
+                    reserveValue(in.valueCoins);
+                    emitR3(storage.gameManagerAddress, toolsInfo.passportPrinterAddress!, editOwner.toCell());
                 }
 
                 // ----------------------------------------------------------------

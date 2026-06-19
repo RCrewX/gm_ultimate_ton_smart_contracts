@@ -17,10 +17,13 @@ import "messages"
 //     id=1 (ACTIVITY) : onchainActivity: uint256  (SYSTEM)
 //     id=2 (AVATAR)   : avatarUrl: Cell<SnakeString> (SYSTEM; "admin" = platform authority)
 //     id>=3           : opaque/extensible (SYSTEM unless a field is later flagged OWNER)
-//   SYSTEM writes arrive collection->item (the GM->R*->collection pipe); the OWNER
-//   nickname write is a DIRECT owner-gated op. Writes MERGE per field (an id=0 system
-//   write keeps the owner's nickname, and vice-versa). individualContent is persisted
-//   as an opaque `cell`; THIS file is its authoritative typed schema (GM/R* never parse it).
+//   ALL writes — SYSTEM (reputation/activity/avatar) AND the OWNER nickname — arrive
+//   collection->item over the GM->R*->collection pipe; the item has NO direct owner
+//   op. The two collection-gated ops differ by FIELD family: SetPassportSystemContent
+//   merges the system field(s) keeping the nickname; SetPassportOwnerContent merges the
+//   nickname keeping reputation. R* gates WHO may invoke each (platform vs the passport
+//   owner). individualContent is persisted as an opaque `cell`; THIS file is its
+//   authoritative typed schema (GM/R* never parse it).
 // =============================================================================
 type SnakeString = slice
 

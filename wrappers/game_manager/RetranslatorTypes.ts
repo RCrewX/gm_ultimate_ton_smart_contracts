@@ -33,12 +33,16 @@ export const ROpcodes = {
     // ⚒ ANVIL edit recipes (wrapped in R1.data). Owner/GM-only on R*.
     OP_EDIT_NFT: 0x456e6674,
     OP_EDIT_SBT: 0x45736274,
+    // Owner self-service passport nickname (wrapped in R1.data). NOT platform-gated on
+    // R*: any user may set THEIR OWN nickname (R* binds the target to the attested initiator).
+    OP_SET_PASSPORT_NICKNAME: 0x536e6963, // "Snic"
     // Printer output bodies emitted by GM (R4). Must match the printer collections.
     OP_PRINTER_DEPLOY_NFT: 0x00000001,
     OP_PRINTER_DEPLOY_SBTN: 0x00000001,
     OP_PRINTER_REVOKE_SBTN_ITEM: 0x00000004,
     OP_PRINTER_EDIT_NFT_ITEM: 0x00000006,
     OP_PRINTER_EDIT_SBT_ITEM: 0x00000007,
+    OP_PRINTER_EDIT_PASSPORT_OWNER_CONTENT: 0x00000008,
 } as const;
 
 // ----- Registry shapes -----
@@ -91,6 +95,9 @@ export type RevokeSbt = { queryId: bigint; itemAddress: Address };
 // ⚒ ANVIL edit recipes: route an opaque content cell to an existing item.
 export type EditNft = { itemAddress: Address; content: Cell };
 export type EditSbt = { itemAddress: Address; content: Cell };
+// Owner self-service nickname (id=0 OWNER field). No target address — R* binds it to
+// the attested initiator, so the owner can only ever reach their own passport.
+export type SetPassportNickname = { index: bigint | number; content: Cell };
 
 // ----- Structured item content schemas (built off-chain; opaque to GM/R*) -----
 // NFTContent { origin: address, type: uint64, tier: uint64, seen: Maybe(^Cell) } —
@@ -104,8 +111,10 @@ export type NFTContent = {
     tier: bigint | number;
     seen?: Cell | null;
 };
-// SBTContent { tatoo: Cell<SnakeString> } — matches sbt_printer/storage.tolk.
-export type SBTContent = { tatoo: Cell };
+// NOTE: the passport content model is TYPED per-id and lives in the printer wrapper
+// (UniversalBlockchainPassportPrinter.ts: buildCoreContent / buildCoreSystemUpdate /
+// snakeCell …). The old opaque SBTContent {tatoo} helpers were removed with the
+// sbt_printer rename — R* forwards the per-id content cell verbatim and never types it.
 
 export function encodeNftContent(c: NFTContent): Cell {
     return beginCell()
@@ -129,14 +138,6 @@ export function decodeNftContent(cell: Cell): NFTContent {
 /** Build a SnakeString cell (short string stored as the cell's data tail). */
 export function snakeString(s: string): Cell {
     return beginCell().storeStringTail(s).endCell();
-}
-
-export function encodeSbtContent(c: SBTContent): Cell {
-    return beginCell().storeRef(c.tatoo).endCell();
-}
-
-export function decodeSbtContent(cell: Cell): SBTContent {
-    return { tatoo: cell.beginParse().loadRef() };
 }
 
 // ----- Registry encoders -----
@@ -253,6 +254,16 @@ export function encodeEditSbt(msg: EditSbt): Cell {
     return beginCell()
         .storeUint(ROpcodes.OP_EDIT_SBT, 32)
         .storeAddress(msg.itemAddress)
+        .storeRef(msg.content)
+        .endCell();
+}
+
+// Owner self-service nickname (wrapped in R1 before sending to GM). The R1 initiator
+// (the passport owner) is attested by GM and used by R* as the target owner.
+export function encodeSetPassportNickname(msg: SetPassportNickname): Cell {
+    return beginCell()
+        .storeUint(ROpcodes.OP_SET_PASSPORT_NICKNAME, 32)
+        .storeUint(typeof msg.index === 'bigint' ? msg.index : BigInt(msg.index), 256)
         .storeRef(msg.content)
         .endCell();
 }

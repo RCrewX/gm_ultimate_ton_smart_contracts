@@ -7,9 +7,13 @@ import "storage"
 // canonical opcodes so the proven item behaviour is preserved. On top of that the
 // passport adds:
 //   * PassportOwnerInit  — OWNER self-deploy (any id) with EMPTY content (§3.3)
-//   * SetPassportSystemContent / SetNickname — the per-field write split (§3.4/§3.5)
-//   * EditPassportItem / PassportDeploy / RevokePassportItem — the collection ops the
-//     GM->R* pipe drives (system authority).
+//   * SetPassportSystemContent / SetPassportOwnerContent — the per-FIELD write split
+//     (§3.4/§3.5). BOTH arrive collection->item; the item has NO direct owner op. The
+//     op IDENTITY (system vs owner) is what bounds which fields a write may touch; R*
+//     enforces WHO may invoke which op. Field-level authority = R* op-gating × item
+//     op-merge, so neither op can clobber the other family's fields.
+//   * EditPassportItem (system edit) / EditPassportOwnerContent (owner-field edit) /
+//     PassportDeploy / RevokePassportItem — the collection ops the GM->R* pipe drives.
 
 // Collection -> item init (system mint path). Authority = collection. individualContent
 // is the typed (per-id) content cell — see storage.tolk; may be a zeroed emptyContentForId.
@@ -32,11 +36,14 @@ struct (0x6f89f5e4) SetPassportSystemContent {
     newContent: cell
 }
 
-// owner -> item: OWNER-writable field write (currently nickname, id=0). Gated to
-// storage.ownerAddress (NO GM round-trip). Merges, preserving the system reputation.
-struct (0x55504e4b) SetNickname {   // "UPNK"
+// collection -> item: OWNER-FIELD content write (currently nickname, id=0). Gated to
+// collectionAddress (same authority as the system write — the GM->R* pipe). The op
+// IDENTITY restricts it to the OWNER field family: the item merges newContent as the
+// nickname ONLY, preserving the system reputation. R* gates WHO may request it (the
+// passport owner, bound to the GM-attested initiator). `newContent` = a Cell<SnakeString>.
+struct (0x6f89f5e5) SetPassportOwnerContent {
     queryId: uint64
-    nickname: cell   // Cell<SnakeString>
+    newContent: cell   // Cell<SnakeString> (the nickname)
 }
 
 struct (0x04ded148) ProveOwnership {
@@ -121,6 +128,18 @@ struct (0x00000007) EditPassportItem {
     queryId: uint64
     itemAddress: address
     newContent: cell
+}
+
+// admin (== GM, driven by R*) -> collection: OWNER-FIELD content edit (nickname).
+// Unlike EditPassportItem, the owner CANNOT pass an arbitrary itemAddress — R* binds
+// `ownerAddress` to the GM-attested initiator and the collection DERIVES the item
+// address from (ownerAddress, index), so an owner can only ever reach THEIR OWN
+// passport. The collection forwards SetPassportOwnerContent to that item.
+struct (0x00000008) EditPassportOwnerContent {
+    queryId: uint64
+    ownerAddress: address
+    index: uint256
+    newContent: cell   // Cell<SnakeString> (the nickname)
 }
 
 // TEP-62 opcode: a passport (soulbound) must reject transfer.

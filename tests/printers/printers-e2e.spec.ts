@@ -14,6 +14,7 @@ import {
     PassportOp,
     buildCoreContent,
     buildCoreSystemUpdate,
+    snakeCell,
 } from '../../wrappers/printers/universal_passport/UniversalBlockchainPassportPrinter';
 import { NFTItem } from '../../wrappers/tep/nft/NFTItem';
 import {
@@ -467,6 +468,80 @@ describe('NFT/SBT Printers (GM-owned, R*-governed)', () => {
         const core = await item.getPassportCore();
         expect(core.reputation).toBe(7n);
         expect(core.nickname).toBe('keep-me');
+    });
+
+    it('owner nickname via GM->R*: lands in the item, reputation preserved (§3.5)', async () => {
+        // GM/owner mints the passport to `receiver` (id=0 CORE: reputation=5, nickname='old').
+        const receiver = await S.blockchain.treasury('nickRcv');
+        const content = buildCoreContent(5, 'old');
+        await S.gameManager.sendMintSbt(S.ownerAccount.getSender(), toNano('1'), receiver.address, content);
+        const itemAddr = await S.passportPrinter.getPassportAddress(receiver.address, 0);
+
+        // The PASSPORT OWNER (receiver) requests their own nickname through GM->R*.
+        // R* binds ownerAddress to the attested initiator (receiver) and the collection
+        // derives the item address from (receiver, 0) — so it lands on receiver's passport.
+        S.messageResult = await S.gameManager.sendSetNickname(
+            receiver.getSender(),
+            toNano('0.5'),
+            0,
+            snakeCell('neo'),
+        );
+        expect(S.messageResult.transactions).toHaveTransaction({
+            from: S.gameManager.address,
+            to: S.passportPrinter.address,
+            success: true,
+            op: PassportOp.EditPassportOwnerContent,
+        });
+        expect(S.messageResult.transactions).toHaveTransaction({
+            from: S.passportPrinter.address,
+            to: itemAddr,
+            success: true,
+            op: PassportOp.SetPassportOwnerContent,
+        });
+        const item = S.blockchain.openContract(UniversalBlockchainPassport.createFromAddress(itemAddr));
+        const core = await item.getPassportCore();
+        expect(core.nickname).toBe('neo');  // owner field updated
+        expect(core.reputation).toBe(5n);   // system field preserved (per-field merge)
+    });
+
+    it('nickname requests are owner-scoped: a stranger can only touch THEIR OWN passport, not a victim (§3.5)', async () => {
+        // Victim owns a passport with nickname 'victim'.
+        const victim = await S.blockchain.treasury('nickVictim');
+        await S.gameManager.sendMintSbt(S.ownerAccount.getSender(), toNano('1'), victim.address, buildCoreContent(0, 'victim'));
+        const victimItemAddr = await S.passportPrinter.getPassportAddress(victim.address, 0);
+
+        // A stranger (not the victim) owns their own self-deployed passport(0).
+        const stranger = await S.blockchain.treasury('nickStranger');
+        const strangerItemAddr = await S.passportPrinter.getPassportAddress(stranger.address, 0);
+        const strangerItem = S.blockchain.openContract(
+            UniversalBlockchainPassport.createFromConfig(
+                { index: 0, collectionAddress: S.passportPrinter.address, ownerAddress: stranger.address },
+                S.passportItemCode,
+            ),
+        );
+        await strangerItem.sendOwnerInit(stranger.getSender(), { value: toNano('0.1') });
+
+        // The stranger fires a nickname request for index 0. R* binds the write to the
+        // stranger (the attested initiator) — the request carries NO victim address — so
+        // the collection derives the STRANGER's OWN passport address, never the victim's.
+        S.messageResult = await S.gameManager.sendSetNickname(
+            stranger.getSender(),
+            toNano('0.5'),
+            0,
+            snakeCell('pwned'),
+        );
+        // The write lands on the STRANGER's item, NOT the victim's.
+        expect(S.messageResult.transactions).toHaveTransaction({
+            from: S.passportPrinter.address,
+            to: strangerItemAddr,
+            success: true,
+            op: PassportOp.SetPassportOwnerContent,
+        });
+        expect(S.messageResult.transactions).not.toHaveTransaction({ to: victimItemAddr });
+        expect((await strangerItem.getPassportCore()).nickname).toBe('pwned'); // own passport updated
+        // Victim's nickname is untouched.
+        const victimItem = S.blockchain.openContract(UniversalBlockchainPassport.createFromAddress(victimItemAddr));
+        expect((await victimItem.getPassportCore()).nickname).toBe('victim');
     });
 
     it('ANVIL: edit by a non-owner is rejected by R*', async () => {

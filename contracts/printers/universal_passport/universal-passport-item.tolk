@@ -13,11 +13,12 @@ import "fees-management"
 //   * OWNER self-deploy for ANY id (PassportOwnerInit) — content starts EMPTY (zeroed
 //     per id). The deterministic address (owner,id,collection,code) is unchanged whether
 //     the item is owner-self-deployed or system-minted (PassportInit).
-//   * SYSTEM writes (SetPassportSystemContent) come ONLY from the collection (== printer,
-//     admin == GM). They carry the per-id SYSTEM payload and MERGE into stored content,
-//     preserving owner fields.
-//   * OWNER writes (SetNickname) come ONLY from storage.ownerAddress, no GM round-trip,
-//     and MERGE preserving system fields. nickname is the one OWNER-writable field (id=0).
+//   * ALL content writes come ONLY from the collection (== printer, admin == GM, driven
+//     by the GM->R* pipe). The item has NO direct owner entrypoint — R* enforces WHO may
+//     request a write; the item only enforces "from my collection authority" + the typed
+//     per-field MERGE. Two collection-gated ops, split by FIELD family:
+//       - SetPassportSystemContent : per-id SYSTEM payload; merges keeping owner fields.
+//       - SetPassportOwnerContent  : the OWNER nickname (id=0); merges keeping reputation.
 //   * Content is NEVER in the address-determining init (§3.9) — edits don't move the item.
 // =============================================================================
 
@@ -25,7 +26,7 @@ type AllowedMessageToPassportItem =
     | PassportInit
     | PassportOwnerInit
     | SetPassportSystemContent
-    | SetNickname
+    | SetPassportOwnerContent
     | ProveOwnership
     | RequestOwner
     | Destroy
@@ -74,16 +75,18 @@ fun onInternalMessage(in: InMessage) {
             storage.save();
         }
 
-        // OWNER field write (nickname) — ONLY from the owner, no GM round-trip. id=0 only
+        // OWNER-FIELD write (nickname) — ONLY from the collection authority (the GM->R*
+        // pipe; R* already verified the requester is THIS passport's owner). id=0 only
         // (the lone owner-writable field); other ids reject (system-only by default).
-        SetNickname => {
+        // Merges the nickname, preserving the system reputation.
+        SetPassportOwnerContent => {
             assert (storage.active == true) throw ERROR_NOT_INITIALIZED;
-            assert (in.senderAddress == storage.ownerAddress) throw ERROR_NOT_FROM_OWNER;
+            assert (in.senderAddress == storage.collectionAddress) throw ERROR_NOT_FROM_COLLECTION;
             assert (storage.index == PASSPORT_ID_CORE) throw ERROR_FIELD_NOT_OWNER_WRITABLE;
             val core = PassportCoreContent.fromCell(storage.individualContent);
             storage.individualContent = PassportCoreContent {
                 reputation: core.reputation,
-                nickname: (msg.nickname as Cell<SnakeString>),
+                nickname: (msg.newContent as Cell<SnakeString>),
             }.toCell();
             storage.save();
         }

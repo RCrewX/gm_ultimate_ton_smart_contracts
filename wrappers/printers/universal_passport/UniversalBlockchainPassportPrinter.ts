@@ -12,9 +12,10 @@ import {
 
 // =============================================================================
 // UniversalBlockchainPassportPrinter (collection) + UniversalBlockchainPassport (item).
-// GM-owned, R*-governed soulbound passport. The collection is the SYSTEM-write
-// authority (admin == GM, driven by the R* pipe); owners SELF-DEPLOY their passport(id)
-// and write their own nickname directly. See contracts/printers/universal_passport/.
+// GM-owned, R*-governed soulbound passport. The collection is the SOLE content-write
+// authority (admin == GM, driven by the R* pipe): EVERY write — system fields AND the
+// owner's nickname — is routed GM->R*->collection->item; the item has NO direct owner
+// op. Owners may SELF-DEPLOY an empty passport(id). See contracts/printers/universal_passport/.
 //
 // Collection storage (PassportPrinterCollectionStorage):
 //   adminAddress, nextItemIndex(uint256), content(ref), passportItemCode(ref),
@@ -29,9 +30,10 @@ export const PassportOp = {
     ChangeCollectionAdmin: 0x00000003,
     RevokePassportItem: 0x00000004,
     EditPassportItem: 0x00000007,          // admin(GM) -> collection (SYSTEM content edit)
+    EditPassportOwnerContent: 0x00000008,  // admin(GM) -> collection (OWNER nickname edit)
     SetPassportSystemContent: 0x6f89f5e4,  // collection -> item (SYSTEM content write)
+    SetPassportOwnerContent: 0x6f89f5e5,   // collection -> item (OWNER nickname write)
     PassportOwnerInit: 0x55504900,         // owner -> item self-deploy ("UPI\0")
-    SetNickname: 0x55504e4b,               // owner -> item nickname write ("UPNK")
 } as const;
 
 // --- Passport content ids (the item's index selects the schema) ---
@@ -213,6 +215,31 @@ export class UniversalBlockchainPassportPrinter implements Contract {
         });
     }
 
+    /**
+     * Direct EditPassportOwnerContent (admin-gated: admin == GM). The OWNER-field
+     * (nickname) edit: the collection DERIVES the item address from (ownerAddress, index)
+     * — no target address is passed — and forwards SetPassportOwnerContent. In production
+     * R* drives this with ownerAddress bound to the attested initiator. `newContent` =
+     * a Cell<SnakeString> nickname (use snakeCell()).
+     */
+    async sendEditPassportOwnerContent(
+        provider: ContractProvider,
+        via: Sender,
+        opts: { ownerAddress: Address; index: bigint | number; newContent: Cell; value: bigint; queryId?: bigint | number },
+    ): Promise<void> {
+        await provider.internal(via, {
+            value: opts.value,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: beginCell()
+                .storeUint(PassportOp.EditPassportOwnerContent, 32)
+                .storeUint(Number(opts.queryId ?? 0), 64)
+                .storeAddress(opts.ownerAddress)
+                .storeUint(typeof opts.index === 'bigint' ? opts.index : BigInt(opts.index), 256)
+                .storeRef(opts.newContent)
+                .endCell(),
+        });
+    }
+
     async sendChangeAdmin(
         provider: ContractProvider,
         via: Sender,
@@ -274,23 +301,6 @@ export class UniversalBlockchainPassport implements Contract {
             body: beginCell()
                 .storeUint(PassportOp.PassportOwnerInit, 32)
                 .storeUint(Number(opts.queryId ?? 0), 64)
-                .endCell(),
-        });
-    }
-
-    /** OWNER nickname write (id=0). Merges, preserving system reputation. */
-    async sendSetNickname(
-        provider: ContractProvider,
-        via: Sender,
-        opts: { value: bigint; nickname: string; queryId?: bigint | number },
-    ): Promise<void> {
-        await provider.internal(via, {
-            value: opts.value,
-            sendMode: SendMode.PAY_GAS_SEPARATELY,
-            body: beginCell()
-                .storeUint(PassportOp.SetNickname, 32)
-                .storeUint(Number(opts.queryId ?? 0), 64)
-                .storeRef(snakeCell(opts.nickname))
                 .endCell(),
         });
     }
