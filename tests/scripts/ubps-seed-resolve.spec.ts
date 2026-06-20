@@ -27,7 +27,7 @@ import {
 } from '../../scripts/seedUbps/resolve';
 import { deriveUserWallet } from '../../scripts/seedUbps/wallets';
 import { estimateDeployerCost, fmtAddr, chunk } from '../../scripts/seedUbps/seedSteps';
-import { runWithRestarts } from '../../scripts/seedUbps/provider';
+import { runWithRestarts, isTransientProviderError } from '../../scripts/seedUbps/provider';
 
 // A tiny valid seed used as the base for "good" + mutated "bad" cases.
 function baseSeed(): UbpsSeed {
@@ -459,5 +459,48 @@ describe('runWithRestarts — provider recovery control flow', () => {
         const r = await runWithRestarts('fine', async () => 42, async () => { recoveries++; }, 12);
         expect(r).toBe(42);
         expect(recoveries).toBe(0);
+    });
+
+    it('rethrows a NON-transient (deterministic) error immediately with 0 restarts', async () => {
+        let recoveries = 0;
+        const err = new Error('Unable to execute get method. Got exit_code: -13');
+        await expect(runWithRestarts(
+            'getCurrentGameData',
+            async () => { throw err; },
+            async () => { recoveries++; },
+            12,
+            isTransientProviderError,
+        )).rejects.toBe(err); // raw error propagates — NOT the wrapped "still failing after N" message
+        expect(recoveries).toBe(0); // never tore the provider down
+    });
+
+    it('still restarts on a transient error when a classifier is supplied', async () => {
+        let recoveries = 0;
+        let calls = 0;
+        const result = await runWithRestarts(
+            'getBalance',
+            async () => { calls++; if (calls < 2) throw new Error('socket hang up (timeout)'); return 'ok'; },
+            async () => { recoveries++; },
+            12,
+            isTransientProviderError,
+        );
+        expect(result).toBe('ok');
+        expect(recoveries).toBe(1); // transient → one restart, then success
+    });
+});
+
+describe('isTransientProviderError — deterministic vs transient classification', () => {
+    it('treats get-method reverts / exit_code as NON-transient (no restart)', () => {
+        expect(isTransientProviderError(new Error('Unable to execute get method. Got exit_code: -13'))).toBe(false);
+        expect(isTransientProviderError(new Error('exit_code: 13'))).toBe(false);
+        expect(isTransientProviderError('Unable to execute get method')).toBe(false);
+    });
+
+    it('treats timeouts / socket / rate-limit / unknown as transient (restart preserved)', () => {
+        expect(isTransientProviderError(new Error('socket hang up'))).toBe(true);
+        expect(isTransientProviderError(new Error('request timed out'))).toBe(true);
+        expect(isTransientProviderError(new Error('429 Too Many Requests'))).toBe(true);
+        expect(isTransientProviderError(new Error('no provider available'))).toBe(true);
+        expect(isTransientProviderError(undefined)).toBe(true); // default: unknown → transient
     });
 });

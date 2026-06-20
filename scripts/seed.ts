@@ -136,6 +136,20 @@ Common:
   --dry-run             Print the plan + combined cost; send NOTHING.
 
 Env: MNEMONIC | PRIVATE_KEY (deployer) + TEST_USERS_SEED (deterministic pilot wallets).
+
+Provider / log controls (all optional):
+  SEED_PROVIDER_LOG_LEVEL   debug | info | warn | error  (default warn — hides per-provider
+                            info spam; keeps failovers/failures/errors). 'debug' restores all.
+  SEED_MAX_PROVIDER_RESTARTS    cap the per-action provider-restart budget (default 12; 0 = give
+                            up immediately — use for unattended runs that must never churn).
+  SEED_PROVIDER_RESTART_WAIT_MS wait between a teardown and a fresh provider (default 60000).
+  TON_RPC_ENDPOINT          pin ONE endpoint (skips the 5-node failover churn + most 429s), e.g.
+                            'https://testnet.toncenter.com/api/v2/jsonRPC?api_key=<TONCENTER_API_KEY>'.
+
+Quieting the package's own '[ConfigParser] … not set' / 429 lines (NOT covered by the log level —
+they are a direct console.warn in ton-provider-system): set the keys you actually hold in .env —
+TONCENTER_API_KEY, CHAINSTACK_KEY_TESTNET, TATUM_API_KEY_TESTNET, ONFINALITY_KEY_TESTNET. A key that
+is referenced but unset drops that provider ("API key not resolved"); set it or accept fewer nodes.
 `);
 }
 
