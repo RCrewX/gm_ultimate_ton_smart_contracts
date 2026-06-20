@@ -60,9 +60,18 @@ seed are skipped):
 
 ```bash
 pnpm seed:ubps:dry \
-  --file scripts/seedUbps/examples/ubps-seed-small-canon.testnet.json \
+  --file scripts/seedUbps/canon25.testnet.json \
   --include scripts/seedUbps/canon.json
 ```
+
+> **Default seed.** [`canon25.testnet.json`](./canon25.testnet.json) is the **default UBPS
+> seed** that the unified runner loads: `pnpm seed:testnet` now seeds UBPS by default (no
+> `--ubps-file` needed), auto-including `canon.json` so the set always reflects the latest
+> canon. This adds UBPS cost (deploys + sends) to a plain `pnpm seed:testnet` run — pass
+> `--no-ubps` (or `--only tokens,race`) to skip it, or `--ubps-file <path>` to seed a
+> different file. In `canon25` **every** one of the 25 users resolves to a final Belief that
+> contains `bs.canon` (all 16 roots list it; unit-subscribers inherit it; the 2 belief-less
+> users point at the canon-only root `b.canon-only`).
 
 The canon strings are **address-determining — do not edit them.** Full convention docs
 (the `Y|N|0|other` answer alphabet, the "shift via `A("0")` then the real `A`" rule,

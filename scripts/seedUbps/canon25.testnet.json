@@ -2,26 +2,37 @@
   "ubpsSeedVersion": 1,
   "network": "testnet",
   "meta": {
-    "description": "UBPS testnet seed (SMALL ~25-user set) WITH UBPS Canon membership: 6 representative root Beliefs list \"bs.canon\" in their sets[] to declare UBPS membership. The canon Q/A + bs.canon themselves are NOT defined here — supply them at run time with `--include scripts/seedUbps/canon.json` (idempotent merge). Derived from the 25-user small set.",
-    "generatedAt": "2026-06-17T10:37:29Z",
-    "generator": "brain:small-set+canon-membership",
+    "description": "canon25 — 25-user set, UBPS Canon governs every user. ALL 16 root Beliefs list \"bs.canon\" in their sets[] to declare UBPS membership, the 7 unit-subscribers inherit it transitively, and the 2 previously belief-less users now point at the canon-only root b.canon-only — so every one of the 25 users resolves to a final Belief containing bs.canon. The canon Q/A + bs.canon themselves are NOT baked in (single-source / always-latest) — supply them at run time with `--include scripts/seedUbps/canon.json` (idempotent, base-wins merge). This is the DEFAULT UBPS seed that `pnpm seed:testnet` auto-loads (with canon.json auto-included).",
+    "generatedAt": "2026-06-20T04:14:12Z",
+    "generator": "brain:small-set+canon-membership(canon25)",
     "derivedFrom": "20260617-133729_ubps-seed-small.testnet.json",
-    "notes": "Run: pnpm seed:ubps:dry --file scripts/seedUbps/examples/ubps-seed-small-canon.testnet.json --include scripts/seedUbps/canon.json . Without --include validation fails (bs.canon undefined) — by design.",
+    "notes": "Default seed path: `pnpm seed:testnet` loads this file (scripts/seedUbps/canon25.testnet.json) and auto-includes scripts/seedUbps/canon.json. Explicit form: pnpm seed:ubps:dry --file scripts/seedUbps/canon25.testnet.json --include scripts/seedUbps/canon.json . Without canon.json merged, validation fails (bs.canon undefined) — by design.",
     "counts": {
       "users": 25,
       "questions": 32,
       "answers": 128,
-      "beliefSets": 32
+      "beliefSets": 33
     },
     "requiresInclude": [
       "scripts/seedUbps/canon.json"
     ],
     "canonMembers": [
+      "b.canon-only",
       "b.centrist",
       "b.classical-liberal",
+      "b.communitarian",
       "b.conservative",
       "b.green-progressive",
       "b.libertarian",
+      "b.market-traditionalist",
+      "b.moderate-pluralist",
+      "b.nationalist",
+      "b.populist-left",
+      "b.populist-right",
+      "b.progressive-left",
+      "b.religious-conservative",
+      "b.religious-left",
+      "b.secular-centrist",
       "b.social-democrat"
     ]
   },
@@ -1051,7 +1062,8 @@
       "sets": [
         "bs2.progressive-secular",
         "bs.pol.liberal",
-        "bs.soc.progressive"
+        "bs.soc.progressive",
+        "bs.canon"
       ]
     },
     {
@@ -1099,7 +1111,8 @@
       "sets": [
         "bs.eco.centrist",
         "bs2.order-faith",
-        "bs.soc.traditional"
+        "bs.soc.traditional",
+        "bs.canon"
       ]
     },
     {
@@ -1111,7 +1124,8 @@
         "bs.eco.centrist",
         "bs.pol.authoritarian",
         "bs.rel.devout",
-        "bs.soc.traditional"
+        "bs.soc.traditional",
+        "bs.canon"
       ]
     },
     {
@@ -1147,7 +1161,8 @@
       "sets": [
         "bs.eco.progressive",
         "bs.rel.devout",
-        "bs.soc.centrist"
+        "bs.soc.centrist",
+        "bs.canon"
       ]
     },
     {
@@ -1157,7 +1172,8 @@
       "answers": [],
       "sets": [
         "bs2.market-traditional",
-        "bs.rel.devout"
+        "bs.rel.devout",
+        "bs.canon"
       ]
     },
     {
@@ -1168,7 +1184,8 @@
       "sets": [
         "bs2.liberal-secular",
         "bs.eco.centrist",
-        "bs.soc.centrist"
+        "bs.soc.centrist",
+        "bs.canon"
       ]
     },
     {
@@ -1179,7 +1196,8 @@
       "sets": [
         "bs.eco.progressive",
         "bs.pol.authoritarian",
-        "bs.soc.progressive"
+        "bs.soc.progressive",
+        "bs.canon"
       ]
     },
     {
@@ -1190,7 +1208,8 @@
       "sets": [
         "bs.eco.conservative",
         "bs.pol.authoritarian",
-        "bs.soc.traditional"
+        "bs.soc.traditional",
+        "bs.canon"
       ]
     },
     {
@@ -1201,7 +1220,8 @@
       "sets": [
         "bs.eco.centrist",
         "bs.soc.traditional",
-        "bs.rel.moderate"
+        "bs.rel.moderate",
+        "bs.canon"
       ]
     },
     {
@@ -1211,7 +1231,17 @@
       "answers": [],
       "sets": [
         "bs2.liberal-secular",
-        "bs2.progressive-secular"
+        "bs2.progressive-secular",
+        "bs.canon"
+      ]
+    },
+    {
+      "id": "b.canon-only",
+      "root": true,
+      "name": "UBPS Canon only",
+      "answers": [],
+      "sets": [
+        "bs.canon"
       ]
     }
   ],
@@ -1428,8 +1458,8 @@
       "walletIndex": 23,
       "createViaMaster": true,
       "pointer": {
-        "type": "none",
-        "ref": null
+        "type": "belief",
+        "ref": "b.canon-only"
       }
     },
     {
@@ -1437,8 +1467,8 @@
       "walletIndex": 24,
       "createViaMaster": true,
       "pointer": {
-        "type": "none",
-        "ref": null
+        "type": "belief",
+        "ref": "b.canon-only"
       }
     }
   ]

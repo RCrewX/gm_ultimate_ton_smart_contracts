@@ -77,9 +77,11 @@ idempotent, so a seed just references shared ids like `"bs.canon"`:
 ```bash
 # dry-run a seed whose root Beliefs reference "bs.canon", pulling the canon in:
 pnpm seed:ubps:dry \
-  --file scripts/seedUbps/examples/ubps-seed-small-canon.testnet.json \
+  --file scripts/seedUbps/canon25.testnet.json \
   --include scripts/seedUbps/canon.json
 ```
 
-See [`examples/ubps-seed-small-canon.testnet.json`](./examples/ubps-seed-small-canon.testnet.json)
-for the ~25-user small set where six representative root Beliefs declare membership.
+See [`canon25.testnet.json`](./canon25.testnet.json) for the 25-user set where UBPS Canon
+governs **every** user (all 16 root Beliefs declare membership, unit-subscribers inherit it,
+and the 2 belief-less users point at the canon-only root `b.canon-only`). It is the default
+UBPS seed loaded by `pnpm seed:testnet` (with `canon.json` auto-included).

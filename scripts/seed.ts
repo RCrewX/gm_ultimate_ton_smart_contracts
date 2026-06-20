@@ -5,7 +5,8 @@
  * Runs ALL (default) or a selected subset, over one shared provider/deployer/network, with a
  * combined cost preflight, --dry-run, mainnet refusal, and a per-module manifest.
  *
- *   pnpm seed:testnet                         # all modules (ubps skipped unless --ubps-file)
+ *   pnpm seed:testnet                         # all modules (ubps uses canon25.testnet.json + canon.json)
+ *   pnpm seed:testnet -- --no-ubps            # all modules except UBPS
  *   pnpm seed:testnet -- --only race,tokens   # subset
  *   pnpm seed:dry                             # plan + combined cost, sends NOTHING
  *   ts-node scripts/seed.ts --testnet --only tokens --owner <addr> --amount 1000000
@@ -15,6 +16,7 @@
  * only authors + dry-runs this (it holds no keys and sends nothing).
  */
 import * as dotenv from 'dotenv';
+import * as path from 'path';
 import { Address } from '@ton/core';
 import {
     SeedContext, SeedOptions, SeedModule, CostEstimate,
@@ -32,6 +34,13 @@ type ModuleName = 'ubps' | 'race' | 'tokens';
 const ALL_MODULES: ModuleName[] = ['ubps', 'tokens', 'race']; // canonical run order (UBPS → tokens → race)
 const MODULES: Record<ModuleName, SeedModule> = { ubps: ubpsModule, tokens: tokensModule, race: raceModule };
 
+// Default UBPS seed: the canon25 set (UBPS Canon governs every user) + the canon fragment,
+// auto-included so the set always reflects the latest canon.json. __dirname-relative so it
+// resolves regardless of CWD (ts-node). When `ubps` is selected and no explicit --ubps-file is
+// given, the run seeds from these instead of skipping UBPS. An explicit --ubps-file overrides.
+const DEFAULT_UBPS_FILE = path.join(__dirname, 'seedUbps', 'canon25.testnet.json');
+const DEFAULT_UBPS_INCLUDES = [path.join(__dirname, 'seedUbps', 'canon.json')];
+
 /** Pure module selection: null/empty → all; otherwise the named subset (in canonical order). Throws on unknown. */
 export function selectModules(only: string[] | null): ModuleName[] {
     if (!only || only.length === 0) return [...ALL_MODULES];
@@ -45,6 +54,7 @@ interface Cli {
     network: 'testnet' | 'mainnet';
     dryRun: boolean;
     only: string[] | null;
+    noUbps: boolean;
     opts: SeedOptions;
 }
 
@@ -56,6 +66,7 @@ function parseCli(argv: string[]): Cli {
     let network: 'testnet' | 'mainnet' = 'testnet';
     let dryRun = false;
     let only: string[] | null = null;
+    let noUbps = false;
     const opts: SeedOptions = {
         tokens: ['A', 'B', 'C', 'D', 'E'],
         tokenAmount: 1_000_000n,
@@ -75,6 +86,7 @@ function parseCli(argv: string[]): Cli {
         else if (a === '--mainnet') network = 'mainnet';
         else if (a === '--dry-run') dryRun = true;
         else if (a === '--all') only = null;
+        else if (a === '--no-ubps') noUbps = true;
         else if (a === '--yes' || a === '-y') { /* reserved */ }
         else if ((a === '--only' || a === '--modules') && argv[i + 1]) only = parseList(argv[++i]);
         else if (a === '--tokens' && argv[i + 1]) opts.tokens = parseList(argv[++i]);
@@ -95,7 +107,7 @@ function parseCli(argv: string[]): Cli {
     }
     if (only === null && positional.length > 0) only = positional; // `seed race tokens`
     if (opts.directions.length === 0) throw new Error('--directions must list at least one of LEFT|UP|RIGHT');
-    return { network, dryRun, only, opts };
+    return { network, dryRun, only, noUbps, opts };
 }
 
 function intArg(s: string, name: string, min: number): number {
@@ -112,8 +124,11 @@ Usage:
   ts-node scripts/seed.ts --testnet [--all | --only ubps,tokens,race] [--dry-run] [flags]
 
 Selection:
-  --all                 Run every module (default). UBPS is skipped unless --ubps-file is given.
+  --all                 Run every module (default). UBPS runs by default using canon25.testnet.json
+                        (+ canon.json auto-included); pass --no-ubps or --only tokens,race to skip it,
+                        or --ubps-file <path> to seed a different UBPS file.
   --only <a,b,c>        Run a subset (comma list): ubps, tokens, race. Positional names also work.
+  --no-ubps             Skip the UBPS module (overrides --all).
 
 Tokens module:
   --tokens A,B,C,D,E    Labels to deploy (default A..E). Each is a plain standalone jetton master.
@@ -127,7 +142,9 @@ Race module (ton_race_game):
   --pilot-index-base <n>  Wallet-index namespace offset (default 1000; keeps pilots off UBPS users).
 
 UBPS module (delegated to scripts/seedUbps):
-  --ubps-file <path>    UBPS Seed Format v1 JSON (required to run UBPS; else UBPS is skipped).
+  --ubps-file <path>    UBPS Seed Format v1 JSON. Default: scripts/seedUbps/canon25.testnet.json
+                        (with canon.json auto-included). An explicit path overrides the default and
+                        does NOT auto-add canon.json — pass --ubps-include for its fragments.
   --ubps-include <path> Merge a reusable fragment (repeatable).
   --users <n>           Cap UBPS users.
 
@@ -161,7 +178,20 @@ async function main(): Promise<void> {
         process.exit(1);
     }
 
-    const selected = selectModules(cli.only);
+    let selected = selectModules(cli.only);
+
+    // --no-ubps opts UBPS out regardless of --all / selection.
+    if (cli.noUbps) selected = selected.filter(n => n !== 'ubps');
+
+    // Default UBPS seed: when UBPS is selected and no explicit --ubps-file was given, seed from
+    // canon25.testnet.json with canon.json auto-included (instead of skipping). An explicit
+    // --ubps-file wins and does NOT auto-add canon.json (the caller owns its includes).
+    if (selected.includes('ubps') && cli.opts.ubpsFile == null) {
+        cli.opts.ubpsFile = DEFAULT_UBPS_FILE;
+        cli.opts.ubpsIncludes = [...DEFAULT_UBPS_INCLUDES, ...cli.opts.ubpsIncludes];
+        console.log(`ubps: no --ubps-file given → using default ${path.relative(process.cwd(), DEFAULT_UBPS_FILE)} (+ canon.json auto-included)`);
+    }
+
     console.log(`\n=== unified seed (${cli.network}) ${cli.dryRun ? '[DRY-RUN — no sends]' : '[LIVE]'} ===`);
     console.log(`modules: ${selected.join(', ')}`);
 
