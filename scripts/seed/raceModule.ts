@@ -203,7 +203,9 @@ export const raceModule: SeedModule = {
             const dw = deriveUserWallet(seedBytes, walletIndex);
             const ship = pilotShip(dw.wallet.address, gameAddr, codes.shipCode, codes.coordinateCellCode);
             const shipActive = await isActive(prov, live, ship.address);
-            const gd = await getGameData(prov, live, ship.address);
+            // An inactive ship has, by definition, made 0 moves — never run a get method on an
+            // uninitialized account (it returns exit_code -13 on every node and storms the provider).
+            const gd = shipActive ? await getGameData(prov, live, ship.address) : null;
             const alreadyDone = movesDoneFrom(gd);
             const remaining = Math.max(0, opts.moves - alreadyDone);
             const requirement = pilotFunding(remaining, !shipActive);
