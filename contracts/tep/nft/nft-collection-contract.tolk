@@ -126,7 +126,7 @@ get fun get_nft_content(itemIndex: int, individualNftContent: Cell<SnakeString>)
     val storage = lazy NftCollectionStorage.load();
     val content = lazy storage.content.load();
 
-    // construct a responce from "common content" and "individual content";
+    // construct a response from "common content" and "individual content";
     // for example:
     // common content = "https://site.org/my-collection/"
     // individual nft = "my-picture-123.png"  (probably, a long string, snake-encoded)

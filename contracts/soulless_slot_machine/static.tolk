@@ -37,8 +37,8 @@ const NFT_REWARD_BUDGET: coins = ton("0.3");   // R1{MintNft} -> printer item de
 const RUDA_MINT_BUDGET: coins = ton("0.25");   // R1{ForwardMintRequest} -> mint chain
 const ESCROW_RETURN_BUDGET: coins = ton("0.06"); // AskToTransfer to SSM's custom wallet
 // Native-stake burn budget: R1{SsmBurnStake} -> GM -> R* -> GM -> GM's RUDA wallet
-// -> minter. Sized above R*'s full-game-walk gas (0.2) so the registered-game gate
-// passes even when SSM is not R*'s cheap active-game.
+// -> minter. Sized to fund that full hop chain even when SSM is not R*'s active-game
+// fast-path (R* authorizes registered games via an O(1) named-slot check, no gas precondition).
 const NATIVE_BURN_BUDGET: coins = ton("0.25");
 
 // Outcome kinds returned by computeOutcome / the reward getter.

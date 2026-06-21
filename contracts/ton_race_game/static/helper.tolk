@@ -210,15 +210,3 @@ fun buildGameFields(max_hp: HP_TYPE): Cell<GameFields> {
     val gameFields: Cell<GameFields> = beginCell().storeInt(0, X_TYPE_BITS).storeUint(0, Y_TYPE_BITS).storeUint(max_hp, HP_TYPE_BITS).storeCoins(0).endCell() as Cell<GameFields>;
     return gameFields;
 }
-
-// Trash:
-// fun buildXY(x: X_TYPE, y: Y_TYPE): Cell<XY> {
-//     val xy: Cell<XY> = beginCell().storeUint(0, 256).storeUint(y, 256).endCell() as Cell<XY>;
-//     return xy;
-// }
-
-// @inline_ref
-// fun buildMoveData(ship_hp: HP_TYPE, xy: XY): Cell<MoveData> {
-//     val moveData: Cell<MoveData> = beginCell().storeUint(ship_hp, 256).storeInt(xy.x, 256).storeUint(xy.y, 256).endCell() as Cell<MoveData>;
-//     return moveData;
-// }

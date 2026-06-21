@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-// SBTN-specific errors (TEP-6666). Range 960-969 to avoid overlap with SBT 950-959.
+// SBTN-specific errors (TEP-6666). Range 960-970 to avoid overlap with SBT 950-959.
 
 const ERROR_NOT_FROM_COLLECTION = 960
 const ERROR_ALREADY_INITIALIZED = 961
