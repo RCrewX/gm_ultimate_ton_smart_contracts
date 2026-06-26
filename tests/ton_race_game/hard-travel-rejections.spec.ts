@@ -67,7 +67,8 @@ describe('Hard Travel - Rejections', () => {
 
     it('reject value below HARD_TRAVEL_MIN_VALUE: exitCode 939', async () => {
         const info = makeHardTravelInfo();
-        const lowValue = toNano('0.5');
+        // Just under the (right-sized) floor — track the const so this stays correct if the floor moves.
+        const lowValue = HARD_TRAVEL_MIN_VALUE - toNano('0.01');
 
         SC_System.messageResult = await SC_System.ownerShip.sendHardTravel(
             SC_System.ownerAccount.getSender(),

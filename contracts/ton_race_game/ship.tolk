@@ -16,6 +16,7 @@ type AllowedMessagesToShip =
     | RequestToFastTravel
     | RequestShipToMint
     | SetSessionKey
+    | WithdrawExcessTON
     | AnyMessage
     | ResetShip
     | FastTravelUpgrade
@@ -341,6 +342,36 @@ fun onInternalMessage(in: InMessage) {
                 body: ReturnExcessesBack {queryId:0},
             });
             cashbackMsg.send(SEND_MODE_CARRY_ALL_REMAINING_BALANCE);
+        },
+        // Owner reclaim of the ship's surplus TON. Owner-WALLET only — NEVER a session key
+        // (same rule as every other internal op: a session key can ONLY move/exit, see the
+        // external path). Keeps WITHDRAW_KEEP_AMOUNT on the ship (so auto/session moves stay
+        // funded) and sends everything above it back to userAddress. Touches NO game state.
+        WithdrawExcessTON => {
+            var storage = lazy ShipStorage.load();
+            assert (in.senderAddress == storage.userAddress) throw ERR_INVALID_USER_SENDER;
+            assert (in.valueCoins >= GAS_COST_WITHDRAW) throw ERR_MESSAGE_VALUE_TOO_LOW;
+
+            // Floor the ship retains. Never below the storage tax (defensive; the const is 1 TON).
+            var keep: coins = WITHDRAW_KEEP_AMOUNT;
+            if (keep < BASIC_STORAGE_TAX) {
+                keep = BASIC_STORAGE_TAX;
+            }
+            // Standing balance BEFORE this message credited — so the incoming gas is not counted
+            // as withdrawable surplus. Require a real surplus, else there is nothing to reclaim.
+            val balanceBeforeMsg = contract.getOriginalBalance() - in.valueCoins;
+            assert (balanceBeforeMsg > keep) throw ERR_NOT_ENOUGH_BALANCE;
+
+            // Reserve EXACTLY the keep floor, then carry-all the rest (surplus + this message's
+            // unspent gas) to the owner. The ship is left holding precisely `keep`.
+            reserveToncoinsOnBalance(keep, RESERVE_MODE_EXACT_AMOUNT);
+            val withdrawMsg = createMessage({
+                bounce: BounceMode.NoBounce,
+                dest: storage.userAddress,
+                value: 0,
+                body: ReturnExcessesBack { queryId: msg.queryId },
+            });
+            withdrawMsg.send(SEND_MODE_IGNORE_ERRORS + SEND_MODE_CARRY_ALL_REMAINING_BALANCE);
         },
         SetSessionKey => {
             // One-time authorise / rotate / revoke. Wallet-only, gated EXACTLY like every

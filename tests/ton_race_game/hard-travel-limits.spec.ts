@@ -52,7 +52,10 @@ describe('Hard Travel - Limits', () => {
 
     it('end by maxTurns (maxTurns=2): 3 moves then HardTravelMoveEnd, final y=3', async () => {
         const info = makeHardTravelInfo({ maxTurns: 2 });
-        const value = HARD_TRAVEL_MIN_VALUE + toNano('1.5');
+        // The walk continues only while carried value >= info.gasLimit (coordinate_cell.tolk),
+        // so to make maxTurns (not gas) the limiter the value must stay above gasLimit across all
+        // 3 hops. Size it off gasLimit (per-hop burn is ~0.02 TON), NOT the right-sized floor.
+        const value = info.gasLimit + toNano('1.5');
 
         SC_System.messageResult = await SC_System.ownerShip.sendHardTravel(
             SC_System.ownerAccount.getSender(),

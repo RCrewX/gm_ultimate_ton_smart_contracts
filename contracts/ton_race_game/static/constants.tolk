@@ -24,9 +24,21 @@ const GAS_COST_RESET_SHIP: coins = ton("0.05"); // ResetShip handler gas buffer
 const GAS_COST_TRANSFER_NOTIFICATION: coins = ton("0.06"); // JettonWallet -> GameManager (TransferNotificationForRecipient) - just gas (estimated)
 const GAS_COST_WITHDRAW_JETTON: coins = ton("0.05"); // Gas for jetton wallet operations during withdrawal
 const GAS_COST_WITHDRAW_NFT: coins = ton("0.05"); // Gas for NFT operations during withdrawal
+const GAS_COST_WITHDRAW: coins = ton("0.02"); // WithdrawExcessTON handler gas (owner reclaim of ship surplus)
 
-// HardTravel: user must send > 1 TON; minimum = 1 TON + gas for first hop (Ship -> current CC)
-const HARD_TRAVEL_MIN_VALUE: coins = ton("1") + GAS_COST_MOVE_SHIP_TO_CC;
+// Floor the ship retains on a WithdrawExcessTON reclaim: one session-move float
+// (== SESSION_MOVE_FLOAT) so auto/session moves stay funded after the owner pulls surplus.
+// Never reserved below the storage tax (enforced in the handler).
+const WITHDRAW_KEEP_AMOUNT: coins = ton("1");
+
+// HardTravel minimum inbound value. Right-sized (2026-06-22, ship-ton-economics-fix) from a
+// flat 1 TON floor down to the real per-walk gas need: it must fund the launch hop
+// (Ship -> current CC), one HardTravel hop (CC -> CC), the HardTravelMoveEnd reply, plus the
+// storage tax. The CLIENT funds the actual N-hop walk via the value it sends (>= this floor);
+// unspent fuel is refunded to the owner by HardTravelMoveEnd, so the floor only needs to cover
+// the shortest viable single-hop walk. Step-0 measurement (see the result) confirms a hard
+// travel at this floor completes and leaves ~0 surplus on the ship.
+const HARD_TRAVEL_MIN_VALUE: coins = GAS_COST_MOVE_SHIP_TO_CC + GAS_COST_MOVE + GAS_COST_MOVE_END + BASIC_STORAGE_TAX;
 
 // Native session (external move/exit) ─────────────────────────────────────────
 // Upper bound for a session move's moveMode (LEFT=0 UP=1 RIGHT=2 EXIT=3). Must equal

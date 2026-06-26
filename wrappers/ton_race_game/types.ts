@@ -30,8 +30,14 @@ export const GAS_COST_JETTON_USED = toNano("0.06"); // GameManager -> Game (Jett
 export const GAS_COST_SHIP_UPGRADE = toNano("0.06"); // Game -> Ship (ShipUpgrade) - estimated
 export const GAS_COST_RESET_SHIP = toNano("0.05"); // Ship reset
 export const GAS_COST_TRANSFER_NOTIFICATION = toNano("0.06"); // JettonWallet -> GameManager (TransferNotificationForRecipient) - estimated
-/** Minimum value for RequestToHardTravel (user must send > 1 TON + gas for first hop). */
-export const HARD_TRAVEL_MIN_VALUE = toNano("1") + GAS_COST_MOVE_SHIP_TO_CC;
+/** WithdrawExcessTON handler gas (owner reclaim of ship surplus). Matches constants.tolk. */
+export const GAS_COST_WITHDRAW = toNano("0.02");
+/** Floor the ship keeps on a WithdrawExcessTON reclaim (== SESSION_MOVE_FLOAT). Matches constants.tolk. */
+export const WITHDRAW_KEEP_AMOUNT = toNano("1");
+/** Minimum value for RequestToHardTravel. Right-sized (ship-ton-economics-fix) to the real
+ *  single-hop walk gas; the client funds the actual walk above this floor. Matches constants.tolk:
+ *  GAS_COST_MOVE_SHIP_TO_CC + GAS_COST_MOVE + GAS_COST_MOVE_END + BASIC_STORAGE_TAX. */
+export const HARD_TRAVEL_MIN_VALUE = GAS_COST_MOVE_SHIP_TO_CC + GAS_COST_MOVE + GAS_COST_MOVE_END + BASIC_STORAGE_TAX;
 
 // messages.ts
 import { Address, Cell, beginCell } from '@ton/core';
@@ -74,6 +80,9 @@ export const Opcodes = {
     OP_WITHDRAW_TON: 0xe06f1de3,
     OP_WITHDRAW_JETTON: 0xb3cff37d,
     OP_WITHDRAW_NFT: 0x09e971a8,
+    OP_WITHDRAW_EXCESS_TON: 0x57644578, // "WdEx" — owner reclaim of ship surplus TON
+
+
 
     OP_MOVE_END: 0xb2a06139,
     OP_REQUEST_TO_MOVE: 0xf2a70b07,
@@ -264,6 +273,10 @@ export type FastTravelUpgrade = {
 export type ResetShip = {};
 
 export type RequestShipToMint = Record<string, never>; // empty body
+
+export type WithdrawExcessTON = {
+    queryId: bigint; // uint64
+};
 
 // Удобный union, если захочешь матчить по $$type
 export type AnyMessage =
@@ -493,6 +506,13 @@ export function encodeFastTravelUpgrade(msg: FastTravelUpgrade): Cell {
 
 export function encodeResetShip(): Cell {
     return beginCell().storeUint(Opcodes.OP_RESET_SHIP, 32).endCell();
+}
+
+export function encodeWithdrawExcessTON(msg: WithdrawExcessTON): Cell {
+    return beginCell()
+        .storeUint(Opcodes.OP_WITHDRAW_EXCESS_TON, 32)
+        .storeUint(msg.queryId, 64)
+        .endCell();
 }
 
 // -------------------------

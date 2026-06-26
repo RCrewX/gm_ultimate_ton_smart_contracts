@@ -7,6 +7,7 @@ import {
     encodeRequestToHardTravel,
     encodeRequestShipToMint,
     encodeResetShip,
+    encodeWithdrawExcessTON,
     encodeSetSessionKey,
     encodeSessionMoveInner,
     encodeShipExternalEnvelope,
@@ -144,6 +145,16 @@ export class Ship implements Contract {
             value,
             sendMode: SendMode.PAY_GAS_SEPARATELY,
             body: encodeRequestShipToMint(),
+        });
+    }
+
+    /** Owner reclaim of the ship's surplus TON (must come from the ship's userAddress).
+     *  The ship keeps WITHDRAW_KEEP_AMOUNT; the rest is sent back to userAddress. */
+    async sendWithdrawExcessTON(provider: ContractProvider, via: Sender, value: bigint, queryId: bigint = 0n) {
+        return await provider.internal(via, {
+            value,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: encodeWithdrawExcessTON({ queryId }),
         });
     }
 

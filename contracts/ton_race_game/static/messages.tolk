@@ -133,6 +133,13 @@ struct (0x6a3b8fdd) ResetShip {}
 
 struct (0x53035644) RequestShipToMint {}
 
+// Owner reclaim of the ship's surplus TON. Owner-wallet ONLY (never a session key).
+// The ship keeps WITHDRAW_KEEP_AMOUNT (so auto/session moves stay funded) and sends
+// the rest to userAddress. Does NOT touch gameFields / movement flags.
+struct (0x57644578) WithdrawExcessTON {   // "WdEx"
+    queryId: uint64
+}
+
 // Native session authorisation (one-time internal message; userAddress-gated).
 // sessionPublicKey = 0 ⇒ revoke. A new key ⇒ rotate (seqno reset to 0). Any TON
 // carried with this message tops up the ship float that funds external moves.
