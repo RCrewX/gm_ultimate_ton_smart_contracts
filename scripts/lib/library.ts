@@ -20,12 +20,14 @@
  *   - selection + guard      — resolve which codes to library, refuse to library a singleton.
  *   - `applyLibraryMode`     — return a CompiledContracts clone with selected codes wrapped.
  *
- * NOT done here (gated on review — plan Phases 2–3):
- *   - masterchain keeper that publishes the real codes to the global library;
- *   - deployment_latest.json library-awareness (publish the library cell as the
- *     code entry + keep full code) and change-detection/verify library branches.
- * Until those land, library mode must NOT be used for a live deploy — a library
- * child can only execute once its code is published + funded on the masterchain.
+ * Companions (Phase 2 — live testnet):
+ *   - `libraryKeeper.ts` — masterchain keeper that publishes the real codes to the
+ *     global library (StateInit `libraries`).
+ *   - `abiCore.buildLibraryAwareContractCodes` — deployment_latest.json publishes the
+ *     library cell as each librarized code's entry (+ isLibrary + fullCode).
+ *   - `deploySystem.hardRedeploy` — the live `--mode hard --library` wiring.
+ * A library child can only execute once its code is published + funded on the
+ * masterchain, so a live library deploy MUST run the keeper first (order invariant).
  */
 import { beginCell, Cell, Dictionary } from '@ton/core';
 import type { CompiledContracts } from './abiCore';
@@ -149,6 +151,43 @@ export function assertSelectable(codes: readonly string[]): void {
             `library mode: unknown code selector "${name}". Eligible: ${Object.keys(LIBRARY_ELIGIBLE).join(', ')}.`,
         );
     }
+}
+
+/** Parsed CLI library inputs (from deploySystem's arg parser). */
+export interface LibraryCliInput {
+    /** `--library` seen. */
+    library?: boolean;
+    /** `--no-library` seen (forces off, overrides env). */
+    noLibrary?: boolean;
+    /** `--library-codes a,b,c` raw value (implies enabled). */
+    libraryCodes?: string;
+}
+
+/**
+ * Resolve the selection with precedence **CLI > env > off**:
+ *   --no-library            -> force OFF (beats everything, incl. env);
+ *   --library / --library-codes -> ON (explicit list if given, else defaults);
+ *   neither                 -> fall back to the env resolver (DEPLOY_LIBRARY_MODE).
+ * Throws (via assertSelectable) on a singleton or unknown selector.
+ */
+export function resolveLibrarySelectionWithCli(
+    cli: LibraryCliInput,
+    env: NodeJS.ProcessEnv = process.env,
+): LibrarySelection {
+    if (cli.noLibrary) {
+        return { enabled: false, codes: [] };
+    }
+    const cliEnabled = cli.library === true || (cli.libraryCodes != null && cli.libraryCodes.trim().length > 0);
+    if (cliEnabled) {
+        const listed = (cli.libraryCodes ?? '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0);
+        const codes = listed.length > 0 ? listed : [...DEFAULT_LIBRARY_CODES];
+        assertSelectable(codes);
+        return { enabled: true, codes };
+    }
+    return resolveLibrarySelection(env);
 }
 
 export interface AppliedLibraryMode {

@@ -196,7 +196,10 @@ import { PassportOp } from '../wrappers/printers/universal_passport/UniversalBlo
 // `passportPrinter` (UniversalBlockchainPassport) — ABI key `sbtPrinter` → `passportPrinter`,
 // new per-id typed content + owner self-deploy, R* ToolsInfo field/ops renamed (opcodes
 // unchanged). The deployed sbtPrinter leaf moves (new code) and is ORPHANED (no migration).
-export const CONSTANTS_SCHEMA_VERSION = 9;
+// v10: added optional library-cell deploy-mode fields — ContractCodeInfo.isLibrary
+// + .fullCode, and top-level DeploymentData.libraryMode + .libraryKeeper. Backward
+// compatible: these are absent on a legacy (default) deploy.
+export const CONSTANTS_SCHEMA_VERSION = 10;
 
 // ============================================================================
 // Serialisation helpers

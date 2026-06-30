@@ -29,11 +29,12 @@ import {
     NetworkDeploymentData,
     DeploymentData,
     ContractCodes,
+    ContractCodeInfo,
     formatAddress,
     getContractCodeData,
 } from '../../lib/buildOutput';
 import { buildGameConstants } from '../../lib/gameConstants';
-import { applyLibraryMode, resolveLibrarySelection, LibrarySelection } from './library';
+import { applyLibraryMode, resolveLibrarySelection, LibrarySelection, type AppliedLibraryMode } from './library';
 
 // ============================================================================
 // Compile — every contract in ONE place (incl. the code-only ones: ssmSlot,
@@ -141,6 +142,49 @@ export function buildFullContractCodes(c: CompiledContracts): ContractCodes {
         nftPrinter: getContractCodeData(c.nftPrinterCode),
         passportPrinter: getContractCodeData(c.passportPrinterCode),
     };
+}
+
+/**
+ * Library-aware contractCodes. For each librarized child code, the published entry's
+ * `hex`/`hash` describe the LIBRARY CELL (so a consumer derives matching addresses),
+ * with `isLibrary:true` and `fullCode` = the real code. Non-librarized entries are
+ * exactly `buildFullContractCodes`. When nothing is wrapped this is byte-identical to
+ * `buildFullContractCodes(compiled)` — the default path is unchanged.
+ *
+ * `effective` already carries library cells in the wrapped fields (from
+ * `applyLibraryMode`), so the primary entries come straight from it; we then attach
+ * `isLibrary`/`fullCode` (the real code from `compiled`) to each wrapped entry.
+ */
+export function buildLibraryAwareContractCodes(
+    compiled: CompiledContracts,
+    effective: CompiledContracts,
+    wrapped: AppliedLibraryMode['wrapped'],
+): ContractCodes {
+    const codes = buildFullContractCodes(effective);
+    const enrich = (info: ContractCodeInfo, fullCode: Cell) => {
+        info.isLibrary = true;
+        info.fullCode = getContractCodeData(fullCode);
+    };
+    for (const w of wrapped) {
+        const full = compiled[w.field];
+        switch (w.field) {
+            case 'jettonWalletCode': enrich(codes.jettonWallet, full); break;
+            case 'shipCode': enrich(codes.games.ton_race_game.ship, full); break;
+            case 'coordinateCellCode': enrich(codes.games.ton_race_game.coordinateCell, full); break;
+            case 'ssmSlotCode': if (codes.games.soulless_slot_machine.ssmSlot) enrich(codes.games.soulless_slot_machine.ssmSlot, full); break;
+            case 'nftItemCode': if (codes.nftItem) enrich(codes.nftItem, full); break;
+            case 'sbtItemCode': if (codes.sbtItem) enrich(codes.sbtItem, full); break;
+            case 'sbtnItemCode': if (codes.sbtnItem) enrich(codes.sbtnItem, full); break;
+            case 'nftPrinterItemCode': if (codes.nftPrinterItem) enrich(codes.nftPrinterItem, full); break;
+            case 'passportPrinterItemCode': if (codes.passportPrinterItem) enrich(codes.passportPrinterItem, full); break;
+            case 'ubpsUnitCode': if (codes.games.ubps) enrich(codes.games.ubps.unit, full); break;
+            case 'ubpsQuestionCode': if (codes.games.ubps) enrich(codes.games.ubps.question, full); break;
+            case 'ubpsAnswerCode': if (codes.games.ubps) enrich(codes.games.ubps.answer, full); break;
+            case 'ubpsBeliefSetCode': if (codes.games.ubps) enrich(codes.games.ubps.beliefSet, full); break;
+            default: break;
+        }
+    }
+    return codes;
 }
 
 /** Non-secret source-of-truth constants (opcodes/errors/gas/enums/storage layout). */
@@ -311,13 +355,13 @@ export async function buildOfflineDeploymentData(
     const compiled = await compileAllContracts();
     // Library mode (opt-in): replace selected mass-replicated child codes with library
     // cells BEFORE address calc, so the whole stateInit graph re-derives consistently.
-    // When the selection is disabled (default) `effective` === `compiled` byte-for-byte,
-    // so the legacy deploy path is unchanged. NOTE: addresses below honor the wrapped
-    // codes, but `contractCodes` still publishes the FULL code (library-aware json +
-    // change-detection are plan Phase 3, gated). Until Phase 2–3 land, library mode is
-    // for address/PoC computation only — never a live deploy (codes aren't published).
-    const { effective } = applyLibraryMode(compiled, librarySelection);
-    const contractCodes = buildFullContractCodes(compiled);
+    // When the selection is disabled (default) `effective` === `compiled` byte-for-byte
+    // and `wrapped` is empty, so `contractCodes` + addresses are unchanged (legacy).
+    // When on, `contractCodes` publishes the LIBRARY CELL as each librarized code's
+    // entry (with isLibrary + fullCode) so consumers derive matching addresses; the
+    // actual masterchain publish (keeper) happens only on a LIVE deploy, not here.
+    const { effective, wrapped } = applyLibraryMode(compiled, librarySelection);
+    const contractCodes = buildLibraryAwareContractCodes(compiled, effective, wrapped);
     const testnet = calculateNetworkAddresses(
         ownerAddress, effective.gameManagerCode, effective.retranslatorCode, effective.gameCode,
         effective.shipCode, effective.coordinateCellCode, effective.ssmCode, effective.ssmSlotCode,
@@ -336,6 +380,9 @@ export async function buildOfflineDeploymentData(
     );
     return {
         timestamp: new Date().toISOString(),
+        // Only set when on — keeps the default (legacy) json byte-for-byte. The keeper
+        // (libraryKeeper) is a live-deploy artifact; offline has no deployer key.
+        libraryMode: librarySelection.enabled ? true : undefined,
         constants: buildConstants(),
         contractCodes,
         testnet: { ...testnet, status: undefined },
