@@ -46,6 +46,33 @@ function flattenHashes(obj: any, prefix = ''): Record<string, string> {
     return out;
 }
 
+interface FlatEntry { hash: string; isLibrary?: boolean; fullCodeHash?: string }
+
+/**
+ * Like flattenHashes, but keep each leaf's library metadata so a library-mode artifact
+ * can be checked against source correctly (its primary `hash` is the LIBRARY-CELL hash,
+ * not the full-code hash — so comparing it to the source full-code hash would falsely
+ * mismatch; we compare the leaf's `fullCode` to source instead).
+ */
+function flattenEntries(obj: any, prefix = ''): Record<string, FlatEntry> {
+    const out: Record<string, FlatEntry> = {};
+    for (const key of Object.keys(obj ?? {})) {
+        const value = obj[key];
+        if (value && typeof value === 'object') {
+            if (typeof value.hash === 'string') {
+                out[prefix + key] = {
+                    hash: value.hash,
+                    isLibrary: value.isLibrary === true,
+                    fullCodeHash: value.fullCode?.hash,
+                };
+            } else {
+                Object.assign(out, flattenEntries(value, prefix + key + '.'));
+            }
+        }
+    }
+    return out;
+}
+
 export interface HashVerificationResult {
     ok: boolean;
     mismatches: string[]; // "path: artifact <hashA> != source <hashB>"
@@ -62,16 +89,26 @@ export async function verifyDeploymentHashes(): Promise<HashVerificationResult> 
     const expected = flattenHashes(buildFullContractCodes(compiled));
 
     const data = readDeploymentData();
-    const actual = flattenHashes(data.contractCodes ?? {});
+    const actual = flattenEntries(data.contractCodes ?? {});
 
     const mismatches: string[] = [];
     const missing: string[] = [];
     for (const [key, expHash] of Object.entries(expected)) {
-        const actHash = actual[key];
-        if (actHash === undefined) {
+        const a = actual[key];
+        if (a === undefined) {
             missing.push(key);
-        } else if (actHash !== expHash) {
-            mismatches.push(`${key}: artifact ${actHash.slice(0, 16)}… != source ${expHash.slice(0, 16)}…`);
+        } else if (a.isLibrary) {
+            // Library-mode entry: `a.hash` is the library-cell hash. The real code lives
+            // in `fullCode` — that is what must match source. (TODO: also rebuild the
+            // library cell from source and compare its boc hash to `a.hash` for a full
+            // round-trip check — cheap to add when the retro path needs it.)
+            if (!a.fullCodeHash) {
+                mismatches.push(`${key}: isLibrary but no fullCode hash recorded`);
+            } else if (a.fullCodeHash !== expHash) {
+                mismatches.push(`${key}: library fullCode ${a.fullCodeHash.slice(0, 16)}… != source ${expHash.slice(0, 16)}…`);
+            }
+        } else if (a.hash !== expHash) {
+            mismatches.push(`${key}: artifact ${a.hash.slice(0, 16)}… != source ${expHash.slice(0, 16)}…`);
         }
     }
     const extra = Object.keys(actual).filter((k) => !(k in expected));

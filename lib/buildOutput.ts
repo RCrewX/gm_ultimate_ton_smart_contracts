@@ -31,6 +31,16 @@ export interface ContractCodeInfo {
     hex: string;
     hash: string;
     hashBase64: string;
+    /**
+     * Library-cell deploy mode (opt-in). When true, `hex`/`hash`/`hashBase64`
+     * describe the TON library reference cell that is published on-chain as this
+     * contract's code — consumers (uap, wrappers) MUST derive child addresses from
+     * it to match the chain. The real code lives in `fullCode` (needed to publish +
+     * verify the library). Absent/false ⇒ legacy full-code deploy (the default).
+     */
+    isLibrary?: boolean;
+    /** The real (full) code BoC, present only when `isLibrary` is true. */
+    fullCode?: { hex: string; hash: string; hashBase64: string };
 }
 
 /**
@@ -131,10 +141,25 @@ export interface ContractCodes {
 }
 
 /**
+ * Library-cell deploy mode metadata. Present only on a library-mode deploy.
+ * `address` is the masterchain (-1) keeper account that publishes the real codes
+ * to the global library; `libraries` lists each published code's name + the
+ * library-cell hash (what addresses are derived from) and the full-code hash.
+ */
+export interface LibraryKeeperInfo {
+    address: AddressInfo;
+    libraries: Array<{ name: string; libraryHash: string; codeHash: string }>;
+}
+
+/**
  * Root deployment data structure
  */
 export interface DeploymentData {
     timestamp: string;
+    /** True when this deploy librarized one or more child codes (opt-in). */
+    libraryMode?: boolean;
+    /** Masterchain library keeper (present on a live library-mode deploy). */
+    libraryKeeper?: LibraryKeeperInfo;
     /**
      * Non-secret source-of-truth constants (opcodes, error codes, gas costs,
      * amounts, enums, storage layout) for sibling projects to stay in sync.

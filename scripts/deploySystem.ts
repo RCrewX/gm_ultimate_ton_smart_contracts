@@ -44,6 +44,7 @@ import {
     NetworkDeploymentData,
     DeploymentData,
     ContractCodes,
+    LibraryKeeperInfo,
     writeFullDeploymentData,
     readDeploymentData,
     formatAddress,
@@ -52,11 +53,19 @@ import { buildGameConstants } from '../lib/gameConstants';
 import {
     compileAllContracts,
     buildFullContractCodes,
+    buildLibraryAwareContractCodes,
     calculateNetworkAddresses,
     createPrinters,
     buildOfflineDeploymentData,
     type CompiledContracts,
 } from './lib/abiCore';
+import {
+    applyLibraryMode,
+    resolveLibrarySelectionWithCli,
+    type LibrarySelection,
+} from './lib/library';
+import { buildKeeperStateInit, KEEPER_FUNDING, KEEPER_WORKCHAIN } from './lib/libraryKeeper';
+import type { StateInit } from '@ton/core';
 import { detectChanges } from './lib/changeDetection';
 import {
     planRetroActions,
@@ -105,6 +114,8 @@ interface CliOptions {
     dryRun: boolean;
     /** Retro: skip the mainnet orphan confirmation gate before an orphaning send. */
     assumeYes: boolean;
+    /** Library-cell deploy mode selection (resolved CLI > env > off). */
+    librarySelection: LibrarySelection;
 }
 
 function parseCliArgs(): CliOptions {
@@ -115,6 +126,10 @@ function parseCliArgs(): CliOptions {
     let mode: DeployMode = 'retro';
     let dryRun = false;
     let assumeYes = false;
+    // Library-mode CLI inputs (resolved with CLI > env > off precedence at the end).
+    let cliLibrary: boolean | undefined;
+    let cliNoLibrary: boolean | undefined;
+    let cliLibraryCodes: string | undefined;
 
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
@@ -131,6 +146,15 @@ function parseCliArgs(): CliOptions {
                 throw new Error(`--mode must be 'hard' or 'retro', got '${m}'`);
             }
             mode = m;
+        } else if (arg === '--full-redeploy') {
+            // Ergonomic alias: a "full redeploy" is exactly `--mode hard`.
+            mode = 'hard';
+        } else if (arg === '--library') {
+            cliLibrary = true;
+        } else if (arg === '--no-library') {
+            cliNoLibrary = true;
+        } else if (arg === '--library-codes' && args[i + 1]) {
+            cliLibraryCodes = args[++i];
         } else if (arg === '--dry-run') {
             dryRun = true;
         } else if (arg === '--yes' || arg === '-y') {
@@ -165,6 +189,15 @@ Options:
   --yes, -y       Retro only: skip the mainnet orphan-confirmation gate
   --offline       Regenerate deployment_latest.json OFFLINE (full ABI, placeholder
                   addrs, deployed:false). No RPC/keys. Same as 'pnpm abi'.
+  --full-redeploy Alias for '--mode hard' (from-scratch full deploy).
+  --library       Library-cell deploy mode: publish selected mass-replicated child
+                  codes to the masterchain global library and deploy children with a
+                  tiny library reference cell as code (cuts rent + deploy fees). Opt-in;
+                  default off. Requires a from-scratch deploy ('--mode hard').
+  --no-library    Force library mode OFF (overrides DEPLOY_LIBRARY_MODE env).
+  --library-codes <list>
+                  Comma-separated selector list to librarize (implies --library).
+                  Default: jettonWallet,ship,coordinateCell. Singletons are rejected.
   --id <n>        Ship station ID (default: 1)
   --help, -h      Show this help
 
@@ -181,6 +214,7 @@ Examples:
   pnpm deploy --mainnet --mode hard
   pnpm deploy --mainnet --yes     # mainnet retro, accept orphaning
   pnpm deploy --id 5              # ship station ID 5
+  pnpm deploy --testnet --mode hard --library   # testnet, library-cell deploy mode
 `);
             process.exit(0);
         }
@@ -195,7 +229,13 @@ Examples:
         }
     }
 
-    return { network, shipStationId, offline, mode, dryRun, assumeYes };
+    const librarySelection = resolveLibrarySelectionWithCli({
+        library: cliLibrary,
+        noLibrary: cliNoLibrary,
+        libraryCodes: cliLibraryCodes,
+    });
+
+    return { network, shipStationId, offline, mode, dryRun, assumeYes, librarySelection };
 }
 
 // ============================================================================
@@ -360,7 +400,9 @@ async function sendTransaction(
     value: bigint,
     withRateLimit: <T>(fn: () => Promise<T>) => Promise<T>,
     body?: Cell,
-    stateInit?: { code: Cell; data: Cell },
+    // Full StateInit (not just {code,data}) so a deploy can carry `libraries` — the
+    // masterchain library keeper publishes its codes via StateInit.libraries.
+    stateInit?: StateInit,
     maxRetries: number = 6
 ): Promise<void> {
     let lastError: Error | null = null;
@@ -593,8 +635,11 @@ function decodeToolsPrinters(cell: Cell | null): { nft: Address | null; sbt: Add
  * ship_station (pubkey=0); deployed:false. Uses the SAME shared assembly as the live deploy,
  * so the full contractCodes (incl. the code-only entries) is always written.
  */
-async function runOfflineAbi(): Promise<void> {
+async function runOfflineAbi(options: CliOptions): Promise<void> {
     console.log('\n=== TON Game ABI (offline publish) ===');
+    if (options.librarySelection.enabled) {
+        console.log(`Library mode: ON (codes: ${options.librarySelection.codes.join(', ')}) — addresses + contractCodes are library-derived.`);
+    }
     const existing = readDeploymentData();
     const ownerStr =
         process.env.DEPLOY_OWNER_ADDRESS ||
@@ -605,7 +650,11 @@ async function runOfflineAbi(): Promise<void> {
     }
     const ownerAddress = Address.parse(ownerStr);
     console.log('Compiling contracts (offline)...');
-    const data = await buildOfflineDeploymentData(ownerAddress);
+    // Preserve prior offline behavior (shipStationId 0n, ownerPublicKey 0n) so the
+    // default `pnpm abi` output is unchanged; only library mode is threaded through.
+    const data = await buildOfflineDeploymentData(
+        ownerAddress, 0n, 0n, undefined, options.librarySelection,
+    );
     writeFullDeploymentData(data);
     console.log('✅ ABI regenerated (offline, deployed:false). Run `pnpm deploy` to make addresses live.');
 }
@@ -673,43 +722,55 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
         // contracts: ssmSlot, *Item).
         console.log('Compiling contracts...');
         const compiled = await compileAllContracts();
+        // Library-cell mode (opt-in): wrap selected mass-replicated child codes as
+        // library cells ONCE here. `effective` carries the library cells in the wrapped
+        // fields (singletons stay full code: effective === compiled for them). Every
+        // downstream instance/deploy/address-calc reads `effective`, so the embedded
+        // codes (Ship<->CoordinateCell) propagate consistently with no double-wrap.
+        // When disabled, effective === compiled and wrapped is empty (legacy, unchanged).
+        const { effective, wrapped } = applyLibraryMode(compiled, options.librarySelection);
         const {
             gameManagerCode, retranslatorCode, gameCode, shipCode, coordinateCellCode,
             ssmCode, ssmSlotCode, jettonWalletCode, jettonMinterCode, subcontractCode,
             sbtItemCode, sbtCollectionCode, sbtnItemCode, sbtnCollectionCode, nftItemCode,
             nftPrinterItemCode, passportPrinterItemCode, nftPrinterCode, passportPrinterCode,
             ubpsCode, ubpsUnitCode, ubpsQuestionCode, ubpsAnswerCode, ubpsBeliefSetCode,
-        } = compiled;
+        } = effective;
         console.log('Contracts compiled successfully');
+        if (options.librarySelection.enabled) {
+            console.log(`Library mode: ON — librarizing ${wrapped.map((w) => w.name).join(', ')}`);
+        }
         console.log('');
 
         const jettonContentUri = process.env.JETTON_CONTENT_URI || 'https://example.com/jetton.json';
         console.log(`Jetton content URI: ${jettonContentUri}`);
 
-        // Build the COMPLETE contract codes (incl. the code-only entries) via the shared assembly.
-        // Never hand-roll this list — that is how code-only entries got dropped.
-        const contractCodes: ContractCodes = buildFullContractCodes(compiled);
+        // Build the COMPLETE contract codes (incl. the code-only entries) via the shared
+        // assembly. Library-aware: librarized entries publish the LIBRARY CELL (so uap
+        // derives matching addresses) + isLibrary + fullCode. When nothing is wrapped this
+        // equals buildFullContractCodes(compiled). Never hand-roll this list.
+        const contractCodes: ContractCodes = buildLibraryAwareContractCodes(compiled, effective, wrapped);
 
-        // Calculate addresses for both networks
+        // Calculate addresses. The DEPLOYING network uses `effective` (library-derived
+        // where wrapped); the other network keeps FULL codes (we never library-deploy it
+        // here, so its addresses stay legacy). When library mode is off, both are full.
         console.log('Calculating addresses...');
-        const testnetAddresses = calculateNetworkAddresses(
-            ownerAddress, gameManagerCode, retranslatorCode, gameCode, shipCode, coordinateCellCode,
-            ssmCode, ssmSlotCode, jettonMinterCode, jettonWalletCode, subcontractCode,
-            nftPrinterCode, passportPrinterCode, nftPrinterItemCode, passportPrinterItemCode,
-            true, shipStationId, ownerPublicKey, jettonContentUri,
-            ubpsCode, ubpsUnitCode, ubpsQuestionCode, ubpsAnswerCode, ubpsBeliefSetCode
+        const addrFor = (codes: CompiledContracts, isTestnet: boolean) => calculateNetworkAddresses(
+            ownerAddress, codes.gameManagerCode, codes.retranslatorCode, codes.gameCode, codes.shipCode, codes.coordinateCellCode,
+            codes.ssmCode, codes.ssmSlotCode, codes.jettonMinterCode, codes.jettonWalletCode, codes.subcontractCode,
+            codes.nftPrinterCode, codes.passportPrinterCode, codes.nftPrinterItemCode, codes.passportPrinterItemCode,
+            isTestnet, shipStationId, ownerPublicKey, jettonContentUri,
+            codes.ubpsCode, codes.ubpsUnitCode, codes.ubpsQuestionCode, codes.ubpsAnswerCode, codes.ubpsBeliefSetCode
         );
-        const mainnetAddresses = calculateNetworkAddresses(
-            ownerAddress, gameManagerCode, retranslatorCode, gameCode, shipCode, coordinateCellCode,
-            ssmCode, ssmSlotCode, jettonMinterCode, jettonWalletCode, subcontractCode,
-            nftPrinterCode, passportPrinterCode, nftPrinterItemCode, passportPrinterItemCode,
-            false, shipStationId, ownerPublicKey, jettonContentUri,
-            ubpsCode, ubpsUnitCode, ubpsQuestionCode, ubpsAnswerCode, ubpsBeliefSetCode
-        );
+        const testnetAddresses = addrFor(network === 'testnet' ? effective : compiled, true);
+        const mainnetAddresses = addrFor(network === 'mainnet' ? effective : compiled, false);
 
         // Initialize deployment data
         const deploymentData: DeploymentData = {
             timestamp,
+            // Library-cell deploy mode flag (libraryKeeper is filled in after the keeper
+            // deploys below). Omitted entirely on a legacy deploy.
+            libraryMode: options.librarySelection.enabled ? true : undefined,
             // Non-secret constants (opcodes/errors/gas/amounts/enums) for sibling
             // projects. Placed between `timestamp` and `contractCodes`.
             constants: buildGameConstants(),
@@ -785,6 +846,49 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
         // ================================================================
         // Deploy contracts
         // ================================================================
+
+        // 0. Library keeper (masterchain). ORDER INVARIANT: the real codes must be
+        //    published + resolvable BEFORE any library child (ownerJettonWallet,
+        //    ownerShip, minted wallets) is deployed — a child runs its own code on
+        //    deploy, which a library cell can only resolve once published.
+        if (options.librarySelection.enabled) {
+            const realCodes = wrapped.map((w) => compiled[w.field]);
+            const keeper = buildKeeperStateInit(realCodes, keyPair.publicKey);
+            console.log('');
+            console.log(`Deploying masterchain library keeper at ${keeper.address.toString()} (wc ${KEEPER_WORKCHAIN})`);
+            console.log(`Publishing ${realCodes.length} librar${realCodes.length === 1 ? 'y' : 'ies'}: ${wrapped.map((w) => w.name).join(', ')}`);
+            console.log(`Keeper funding: ${(Number(KEEPER_FUNDING) / 1e9).toFixed(4)} TON`);
+
+            if (!(await isContractDeployed(client, keeper.address, withRateLimit))) {
+                await withTimeout(
+                    sendTransaction(client, wallet, keyPair, keeper.address, KEEPER_FUNDING, withRateLimit, undefined, keeper.stateInit),
+                    DEPLOYMENT_TIMEOUT,
+                    'Deploying library keeper',
+                );
+                const keeperActive = await waitForDeploy(client, keeper.address, withRateLimit, 30);
+                if (!keeperActive) {
+                    throw new Error(
+                        `Library keeper not confirmed active on wc ${KEEPER_WORKCHAIN} after 60s. If the ` +
+                        `provider rejected the cross-workchain (-1) deploy, this is the documented Phase-2 ` +
+                        `tooling stop condition — STOP and report (do not deploy library children).`,
+                    );
+                }
+                console.log('✓ Library keeper deployed + active — global library published.');
+            } else {
+                console.log('Library keeper already deployed (libraries already published).');
+            }
+            await sleep(TRANSACTION_WAIT_TIME);
+
+            deploymentData.libraryKeeper = {
+                address: formatAddress(keeper.address, isTestnet),
+                libraries: wrapped.map((w) => ({
+                    name: w.name,
+                    libraryHash: w.libraryHash,
+                    codeHash: w.codeHash,
+                })),
+            };
+            writeFullDeploymentData(deploymentData);
+        }
 
         // 1. Deploy GameManager
         await checkAndDeploy(
@@ -877,6 +981,22 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
         );
         console.log('Owner JettonWallet:', ownerJettonWallet.address.toString());
         writeFullDeploymentData(deploymentData);
+
+        // 5a. Library resolution probe — the just-deployed ownerJettonWallet is a
+        //     library child; its get-method can only run if the keeper's published
+        //     library resolves on-chain. If it throws, the publish is wrong → STOP.
+        if (options.librarySelection.enabled && wrapped.some((w) => w.name === 'jettonWallet')) {
+            try {
+                await withRateLimit(() => client.open(ownerJettonWallet).getJettonBalance());
+                console.log('✓ Library resolution probe passed (ownerJettonWallet get-method ran).');
+            } catch (e: any) {
+                throw new Error(
+                    `Library resolution probe FAILED on ownerJettonWallet get_wallet_data: ${e?.message || e}. ` +
+                    `The published library is not resolvable on-chain — STOP (Phase-2 stop condition); ` +
+                    `do not trust the rest of the deploy.`,
+                );
+            }
+        }
 
         // 5b. Deploy NFTPrinter (GM-owned, TEP-62 transferable collection).
         await checkAndDeploy(
@@ -1526,8 +1646,18 @@ async function main(): Promise<void> {
     // OFFLINE ABI publish — no RPC, no keys. Independent of mode. Same producer +
     // shared assembly as a live deploy, with placeholder addresses + deployed:false.
     if (options.offline) {
-        await runOfflineAbi();
+        await runOfflineAbi(options);
         return;
+    }
+
+    // Library-cell mode requires a from-scratch deploy: a library child can only be
+    // deployed AFTER its code is published to the masterchain keeper (which the hard
+    // walk sequences first). Retro is incremental and has no keeper step.
+    if (options.librarySelection.enabled && options.mode !== 'hard') {
+        throw new Error(
+            "Library mode (--library) requires a from-scratch deploy. Re-run with '--mode hard' " +
+            '(or --full-redeploy). Retro/incremental library deploys are not supported.',
+        );
     }
 
     if (options.mode === 'hard') {

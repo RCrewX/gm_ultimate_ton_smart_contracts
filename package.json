@@ -16,6 +16,7 @@
         "deploy:testnet": "ts-node scripts/deploySystem.ts --testnet",
         "deploy:mainnet": "ts-node scripts/deploySystem.ts --mainnet",
         "deploy:testnet:hard": "ts-node scripts/deploySystem.ts --testnet --mode hard",
+        "deploy:testnet:library": "ts-node scripts/deploySystem.ts --testnet --mode hard --library",
         "deploy:mainnet:hard": "ts-node scripts/deploySystem.ts --mainnet --mode hard",
         "deploy:dry:testnet": "ts-node scripts/deploySystem.ts --testnet --dry-run",
         "deploy:dry:mainnet": "ts-node scripts/deploySystem.ts --mainnet --dry-run",
