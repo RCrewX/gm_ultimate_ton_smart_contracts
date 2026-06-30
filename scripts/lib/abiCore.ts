@@ -33,6 +33,7 @@ import {
     getContractCodeData,
 } from '../../lib/buildOutput';
 import { buildGameConstants } from '../../lib/gameConstants';
+import { applyLibraryMode, resolveLibrarySelection, LibrarySelection } from './library';
 
 // ============================================================================
 // Compile — every contract in ONE place (incl. the code-only ones: ssmSlot,
@@ -305,24 +306,33 @@ export async function buildOfflineDeploymentData(
     shipStationId: bigint = 0n,
     ownerPublicKey: bigint = 0n,
     jettonContentUri: string = process.env.JETTON_CONTENT_URI || 'https://example.com/jetton.json',
+    librarySelection: LibrarySelection = resolveLibrarySelection(),
 ): Promise<DeploymentData> {
     const compiled = await compileAllContracts();
+    // Library mode (opt-in): replace selected mass-replicated child codes with library
+    // cells BEFORE address calc, so the whole stateInit graph re-derives consistently.
+    // When the selection is disabled (default) `effective` === `compiled` byte-for-byte,
+    // so the legacy deploy path is unchanged. NOTE: addresses below honor the wrapped
+    // codes, but `contractCodes` still publishes the FULL code (library-aware json +
+    // change-detection are plan Phase 3, gated). Until Phase 2–3 land, library mode is
+    // for address/PoC computation only — never a live deploy (codes aren't published).
+    const { effective } = applyLibraryMode(compiled, librarySelection);
     const contractCodes = buildFullContractCodes(compiled);
     const testnet = calculateNetworkAddresses(
-        ownerAddress, compiled.gameManagerCode, compiled.retranslatorCode, compiled.gameCode,
-        compiled.shipCode, compiled.coordinateCellCode, compiled.ssmCode, compiled.ssmSlotCode,
-        compiled.jettonMinterCode, compiled.jettonWalletCode, compiled.subcontractCode,
-        compiled.nftPrinterCode, compiled.passportPrinterCode, compiled.nftPrinterItemCode, compiled.passportPrinterItemCode,
+        ownerAddress, effective.gameManagerCode, effective.retranslatorCode, effective.gameCode,
+        effective.shipCode, effective.coordinateCellCode, effective.ssmCode, effective.ssmSlotCode,
+        effective.jettonMinterCode, effective.jettonWalletCode, effective.subcontractCode,
+        effective.nftPrinterCode, effective.passportPrinterCode, effective.nftPrinterItemCode, effective.passportPrinterItemCode,
         true, shipStationId, ownerPublicKey, jettonContentUri,
-        compiled.ubpsCode, compiled.ubpsUnitCode, compiled.ubpsQuestionCode, compiled.ubpsAnswerCode, compiled.ubpsBeliefSetCode,
+        effective.ubpsCode, effective.ubpsUnitCode, effective.ubpsQuestionCode, effective.ubpsAnswerCode, effective.ubpsBeliefSetCode,
     );
     const mainnet = calculateNetworkAddresses(
-        ownerAddress, compiled.gameManagerCode, compiled.retranslatorCode, compiled.gameCode,
-        compiled.shipCode, compiled.coordinateCellCode, compiled.ssmCode, compiled.ssmSlotCode,
-        compiled.jettonMinterCode, compiled.jettonWalletCode, compiled.subcontractCode,
-        compiled.nftPrinterCode, compiled.passportPrinterCode, compiled.nftPrinterItemCode, compiled.passportPrinterItemCode,
+        ownerAddress, effective.gameManagerCode, effective.retranslatorCode, effective.gameCode,
+        effective.shipCode, effective.coordinateCellCode, effective.ssmCode, effective.ssmSlotCode,
+        effective.jettonMinterCode, effective.jettonWalletCode, effective.subcontractCode,
+        effective.nftPrinterCode, effective.passportPrinterCode, effective.nftPrinterItemCode, effective.passportPrinterItemCode,
         false, shipStationId, ownerPublicKey, jettonContentUri,
-        compiled.ubpsCode, compiled.ubpsUnitCode, compiled.ubpsQuestionCode, compiled.ubpsAnswerCode, compiled.ubpsBeliefSetCode,
+        effective.ubpsCode, effective.ubpsUnitCode, effective.ubpsQuestionCode, effective.ubpsAnswerCode, effective.ubpsBeliefSetCode,
     );
     return {
         timestamp: new Date().toISOString(),
