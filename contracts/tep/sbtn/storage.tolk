@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: UNLICENSED
 import "messages"
 
-// SBTN (TEP-6666): canonical StateInit data — index, collection, owner only (no authority/content).
+// SBTN (TEP-6666): unused legacy 3-field reduction (index, collection, owner). NOT the canonical
+// StateInit data — address derivation uses the full SbtnItemStorage (see calcDeployedSbtnItem below).
 struct SbtnItemData {
     index: uint256
     collectionAddress: address
     ownerAddress: address
 }
 
-// Full storage after sbtn_init: index, collection, owner (null after destroy), active, revokedAt, individualContent.
-// Authority is collection when owner != null; addr_none when destroyed.
+// Full storage after sbtn_init: index, collection, owner, active, revokedAt, individualContent.
+// destroy only deactivates (active = false) and does NOT clear owner — owner is immutable (part of
+// the deterministic StateInit, so it fixes the item address). revoke stamps revokedAt; collection is
+// the revoke authority.
 struct SbtnItemStorage {
     index: uint256
     collectionAddress: address

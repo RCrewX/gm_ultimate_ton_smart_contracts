@@ -2,7 +2,7 @@
 import { beginCell, fromNano, toNano } from "@ton/core";
 import '@ton/test-utils';
 import { ContractSystem, initContractSystem, cleanupContractSystem, buildJettonUsageForwardPayload } from '../test_utils';
-import { Opcodes, GAS_COST_JETTON_USED, GAS_COST_SHIP_UPGRADE, GAS_COST_TRANSFER_NOTIFICATION, BASIC_STORAGE_TAX, TODO_TOTAL_GAS_TO_MOVE, JettonUsageMode } from '../../wrappers/ton_race_game/types';
+import { Opcodes, GAS_COST_JETTON_USED, GAS_COST_SHIP_UPGRADE, GAS_COST_TRANSFER_NOTIFICATION, BASIC_STORAGE_TAX, TOTAL_GAS_TO_MOVE, JettonUsageMode } from '../../wrappers/ton_race_game/types';
 import { Opcodes as GameManagerOpcodes } from '../../wrappers/game_manager/types';
 import { writeGasCosts } from '../../lib/buildOutput';
 import { MoveMode } from "../../wrappers/ton_race_game/structs";
@@ -74,8 +74,8 @@ describe("Gas Prices - Game Upgrade", () => {
     it("ShipUpgrade", async () => {
         const gameManagerJettonWalletAddress = await SC_System.jettonMinter.getWalletAddress(SC_System.gameManager.address);
         // Initialize ship by doing a first move (this sets max_hp to BASIC_SHIP_HP)
-        // Use a higher value to ensure it covers TODO_TOTAL_GAS_TO_MOVE
-        const moveValue = TODO_TOTAL_GAS_TO_MOVE;
+        // Use a higher value to ensure it covers TOTAL_GAS_TO_MOVE
+        const moveValue = TOTAL_GAS_TO_MOVE;
         SC_System.messageResult = await SC_System.ownerShip.sendMove(
             SC_System.ownerAccount.getSender(),
             moveValue,

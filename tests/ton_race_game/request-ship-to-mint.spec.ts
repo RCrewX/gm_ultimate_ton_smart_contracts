@@ -5,7 +5,7 @@ import { compile } from '@ton/blueprint';
 import { ContractSystem, initContractSystem, cleanupContractSystem } from '../test_utils';
 import { Ship } from '../../wrappers/ton_race_game/Ship';
 import { MoveMode } from '../../wrappers/ton_race_game/structs';
-import { Opcodes, TODO_TOTAL_GAS_TO_MOVE, GAS_COST_REQUEST_MINT, GAS_COST_ANY_MESSAGE } from '../../wrappers/ton_race_game/types';
+import { Opcodes, TOTAL_GAS_TO_MOVE, GAS_COST_REQUEST_MINT, GAS_COST_ANY_MESSAGE } from '../../wrappers/ton_race_game/types';
 import { Opcodes as GMOpcodes } from '../../wrappers/game_manager/types';
 import { ROpcodes } from '../../wrappers/game_manager/RetranslatorTypes';
 
@@ -47,7 +47,7 @@ describe('RequestShipToMint', () => {
             coordinateCellCode: SC_System.coordinateCellCode,
         }, shipCode));
         await freshShip.sendDeploy(SC_System.ownerAccount.getSender(), toNano('1'));
-        await freshShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
+        await freshShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
         const pending = await freshShip.getPendingMintAmount();
         expect(pending).toBe(0n);
         SC_System.messageResult = await freshShip.sendRequestShipToMint(
@@ -63,12 +63,12 @@ describe('RequestShipToMint', () => {
     });
 
     it('owner RequestShipToMint with pending > 0 sends RequestMint and zeros pending', async () => {
-        await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
-        await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
+        await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
+        await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
         let gameData = await SC_System.ownerShip.getCurrentGameData();
         if (!gameData || !gameData.jettonAmount || gameData.jettonAmount === 0n) {
-            await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
-            await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
+            await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
+            await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
             gameData = await SC_System.ownerShip.getCurrentGameData();
         }
         if (!gameData || !gameData.jettonAmount || gameData.jettonAmount === 0n) {

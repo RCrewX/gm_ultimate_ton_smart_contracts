@@ -7,7 +7,7 @@ import {
     Opcodes,
     GAS_COST_SEND_MOVE,
     HARD_TRAVEL_MIN_VALUE,
-    TODO_TOTAL_GAS_TO_MOVE,
+    TOTAL_GAS_TO_MOVE,
 } from '../../wrappers/ton_race_game/types';
 
 describe('Hard Travel', () => {
@@ -112,7 +112,7 @@ describe('Hard Travel', () => {
     it('HardTravel from (0,1) after one move: LaunchHardTravel from current cell', async () => {
         await SC_System.ownerShip.sendMove(
             SC_System.ownerAccount.getSender(),
-            TODO_TOTAL_GAS_TO_MOVE,
+            TOTAL_GAS_TO_MOVE,
             MoveMode.UP
         );
         expect(await SC_System.ownerShip.getMovementInProcess()).toBe(false);

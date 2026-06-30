@@ -11,7 +11,7 @@ const MINT_TON_AMOUNT: coins = ton("0.2");
 const GAS_COST_REQUEST_SHIP_ADDRESS: coins = ton("0.015"); // From gas consumption test
 const GAS_COST_REQUEST_COORDINATE_CELL_ADDRESS: coins = ton("0.015"); // From gas consumption test
 const GAS_COST_REQUEST_TO_MOVE: coins = ton("0.06"); // 0.0589864 + buffer
-const TODO_TOTAL_GAS_TO_MOVE = GAS_COST_REQUEST_TO_MOVE + GAS_COST_MOVE_SHIP_TO_CC + BASIC_STORAGE_TAX;
+const TOTAL_GAS_TO_MOVE = GAS_COST_REQUEST_TO_MOVE + GAS_COST_MOVE_SHIP_TO_CC + BASIC_STORAGE_TAX;
 // Internal message gas costs (from test results, with buffer)
 const GAS_COST_MOVE_SHIP_TO_CC: coins = ton("0.12"); // Ship -> CoordinateCell (MoveShipToCC) - includes storage + gas for Move (estimated from move flow)
 const GAS_COST_MOVE: coins = ton("0.12"); // CoordinateCell -> CoordinateCell (Move) - includes storage (if new) + gas for MoveEnd (estimated from move flow)

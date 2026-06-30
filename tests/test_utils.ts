@@ -11,7 +11,7 @@ import { MoveMode } from "../wrappers/ton_race_game/structs";
 import { jettonContentToCell, JettonMinter } from "../wrappers/tep/jetton/JettonMinter";
 import { JettonWallet } from "../wrappers/tep/jetton/JettonWallet";
 import { GAS_COST_REDIRECT_MESSAGE, GAS_COST_SET_RETRANSLATOR } from "../wrappers/game_manager/types";
-import { GAS_COST_REQUEST_TO_MOVE, GAS_COST_MOVE_SHIP_TO_CC, TODO_TOTAL_GAS_TO_MOVE, JettonUsageMode, GAS_COST_SEND_MOVE, Opcodes as GameOpcodes } from "../wrappers/ton_race_game/types";
+import { GAS_COST_REQUEST_TO_MOVE, GAS_COST_MOVE_SHIP_TO_CC, TOTAL_GAS_TO_MOVE, JettonUsageMode, GAS_COST_SEND_MOVE, Opcodes as GameOpcodes } from "../wrappers/ton_race_game/types";
 
 export type ContractSystem = {
     blockchain: Blockchain;
@@ -299,10 +299,10 @@ export async function setupCoordinateCellWithFirstExplorer(
     await coordinateCell.sendDeploy(SC_System.ownerAccount.getSender(), toNano('0.05'));
 
     // Open the cell by moving to it (this sets firstExplorer)
-    // Ship requires TODO_TOTAL_GAS_TO_MOVE (move no longer triggers mint; mint via RequestShipToMint)
+    // Ship requires TOTAL_GAS_TO_MOVE (move no longer triggers mint; mint via RequestShipToMint)
     SC_System.messageResult = await firstExplorerShip.sendMove(
         SC_System.ownerAccount.getSender(),
-        TODO_TOTAL_GAS_TO_MOVE,
+        TOTAL_GAS_TO_MOVE,
         MoveMode.UP
     );
 

@@ -4,7 +4,7 @@ import '@ton/test-utils';
 import { ContractSystem, initContractSystem, cleanupContractSystem } from '../test_utils';
 import { MoveMode } from '../../wrappers/ton_race_game/structs';
 import { CoordinateCell } from '../../wrappers/ton_race_game/CoordinateCell';
-import { GAS_COST_REQUEST_TO_MOVE, TODO_TOTAL_GAS_TO_MOVE, GAS_COST_ANY_MESSAGE, Opcodes } from '../../wrappers/ton_race_game/types';
+import { GAS_COST_REQUEST_TO_MOVE, TOTAL_GAS_TO_MOVE, GAS_COST_ANY_MESSAGE, Opcodes } from '../../wrappers/ton_race_game/types';
 import { Ship } from '../../wrappers/ton_race_game/Ship';
 
 describe('Coordinate Cell Rewards - Minimal Reward Logic', () => {
@@ -28,7 +28,7 @@ describe('Coordinate Cell Rewards - Minimal Reward Logic', () => {
         // First move: open cell at (0, 1)
         SC_System.messageResult = await SC_System.ownerShip.sendMove(
             SC_System.ownerAccount.getSender(),
-            TODO_TOTAL_GAS_TO_MOVE,
+            TOTAL_GAS_TO_MOVE,
             MoveMode.UP
         );
 
@@ -69,7 +69,7 @@ describe('Coordinate Cell Rewards - Minimal Reward Logic', () => {
         // First ship opens cell at (0, 1)
         SC_System.messageResult = await firstShip.sendMove(
             SC_System.ownerAccount.getSender(),
-            TODO_TOTAL_GAS_TO_MOVE,
+            TOTAL_GAS_TO_MOVE,
             MoveMode.UP
         );
 
@@ -125,7 +125,7 @@ describe('Coordinate Cell Rewards - Minimal Reward Logic', () => {
             
             SC_System.messageResult = await SC_System.ownerShip.sendMove(
                 SC_System.ownerAccount.getSender(),
-                TODO_TOTAL_GAS_TO_MOVE,
+                TOTAL_GAS_TO_MOVE,
                 MoveMode.UP
             );
 
@@ -168,7 +168,7 @@ describe('Coordinate Cell Rewards - Minimal Reward Logic', () => {
             
             SC_System.messageResult = await SC_System.ownerShip.sendMove(
                 SC_System.ownerAccount.getSender(),
-                TODO_TOTAL_GAS_TO_MOVE,
+                TOTAL_GAS_TO_MOVE,
                 MoveMode.UP
             );
 
@@ -205,7 +205,7 @@ describe('Coordinate Cell Rewards - Minimal Reward Logic', () => {
             
             SC_System.messageResult = await SC_System.ownerShip.sendMove(
                 SC_System.ownerAccount.getSender(),
-                TODO_TOTAL_GAS_TO_MOVE,
+                TOTAL_GAS_TO_MOVE,
                 MoveMode.UP
             );
 
