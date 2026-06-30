@@ -89,9 +89,14 @@ fun onInternalMessage(in: InMessage) {
 
 
             
-            // For new cells, don't reserve at all - just leave enough for MoveEnd
-            // For existing cells, use normal reserve
-            // TODO: why?
+            // reserveValue keeps (prevBalance + storage tax) so the mode-128 send below forwards
+            // (msgValue - tax). For an ALREADY-opened cell that preserves its funded balance while
+            // forwarding the incoming move value on to the MoveEnd cashback.
+            // A FIRST-time-opened cell has ~no prior balance, so we SKIP the reserve and let the
+            // mode-128 send carry the ENTIRE incoming value back with the MoveEnd — maximising the
+            // explorer's cashback on first open rather than parking the 0.01 TON tax in a brand-new
+            // cell. (Verified 2026-06-30: removing this guard does NOT break correctness — moves and
+            // rewards still pass; it only changes whether a first-opened cell retains the tax cushion.)
             if (!firstTimeOpened) {
                 reserveValue(in.valueCoins);
             }
