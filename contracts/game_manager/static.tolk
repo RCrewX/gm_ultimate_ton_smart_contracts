@@ -67,7 +67,7 @@ struct GameManagerStorage {
     my_little_tax: coins // 0.01 by default
 
     config: cell?
-    // config is empty for now
+    // reserved, currently unused — deployed as null (see calcDeployedGameManager)
 }
 
 fun GameManagerStorage.load() {
