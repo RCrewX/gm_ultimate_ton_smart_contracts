@@ -64,7 +64,7 @@ import {
     resolveLibrarySelectionWithCli,
     type LibrarySelection,
 } from './lib/library';
-import { buildKeeperStateInit, KEEPER_FUNDING, KEEPER_WORKCHAIN } from './lib/libraryKeeper';
+import { buildKeeperStateInit, assertInitParity, KEEPER_FUNDING, KEEPER_WORKCHAIN } from './lib/libraryKeeper';
 import type { StateInit } from '@ton/core';
 import { detectChanges } from './lib/changeDetection';
 import {
@@ -116,6 +116,8 @@ interface CliOptions {
     assumeYes: boolean;
     /** Library-cell deploy mode selection (resolved CLI > env > off). */
     librarySelection: LibrarySelection;
+    /** Pin a single keyed RPC endpoint for the whole deploy (disables provider rotation). */
+    rpcEndpoint?: string;
 }
 
 function parseCliArgs(): CliOptions {
@@ -130,6 +132,7 @@ function parseCliArgs(): CliOptions {
     let cliLibrary: boolean | undefined;
     let cliNoLibrary: boolean | undefined;
     let cliLibraryCodes: string | undefined;
+    let rpcEndpoint: string | undefined;
 
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
@@ -155,6 +158,8 @@ function parseCliArgs(): CliOptions {
             cliNoLibrary = true;
         } else if (arg === '--library-codes' && args[i + 1]) {
             cliLibraryCodes = args[++i];
+        } else if (arg === '--rpc-endpoint' && args[i + 1]) {
+            rpcEndpoint = args[++i];
         } else if (arg === '--dry-run') {
             dryRun = true;
         } else if (arg === '--yes' || arg === '-y') {
@@ -198,6 +203,10 @@ Options:
   --library-codes <list>
                   Comma-separated selector list to librarize (implies --library).
                   Default: jettonWallet,ship,coordinateCell. Singletons are rejected.
+  --rpc-endpoint <url>
+                  Pin ONE keyed RPC endpoint for the whole deploy (disables provider
+                  rotation). Beats DEPLOY_RPC_ENDPOINT / TON_RPC_ENDPOINT. Use a keyed
+                  endpoint to avoid the keyless-provider 429 storm during confirms.
   --id <n>        Ship station ID (default: 1)
   --help, -h      Show this help
 
@@ -206,6 +215,8 @@ Environment Variables:
   MNEMONIC             24-word mnemonic (alternative to PRIVATE_KEY)
   JETTON_CONTENT_URI   Jetton metadata URI
   OWNER_PUBLIC_KEY     Public key for external signatures
+  DEPLOY_RPC_ENDPOINT  Pin one keyed RPC endpoint (same as --rpc-endpoint)
+  TON_RPC_ENDPOINT     Legacy RPC endpoint override (lowest precedence)
 
 Examples:
   pnpm deploy                     # testnet, RETRO (incremental)
@@ -235,7 +246,7 @@ Examples:
         libraryCodes: cliLibraryCodes,
     });
 
-    return { network, shipStationId, offline, mode, dryRun, assumeYes, librarySelection };
+    return { network, shipStationId, offline, mode, dryRun, assumeYes, librarySelection, rpcEndpoint };
 }
 
 // ============================================================================
@@ -352,6 +363,63 @@ async function waitForDeploy(
         await sleep(2000);
     }
     return false;
+}
+
+/**
+ * Read an account's concrete on-chain state, distinguishing a transient RPC failure
+ * (429/timeout/5xx) from a real 'uninitialized'. Unlike `isContractDeployed` (which
+ * collapses every error to "not active"), this returns 'unknown' on an RPC error so the
+ * caller can keep waiting instead of declaring an undeployed account.
+ */
+async function readAccountState(
+    client: TonClient,
+    address: Address,
+    withRateLimit: <T>(fn: () => Promise<T>) => Promise<T>,
+): Promise<{ kind: 'active' | 'uninit' | 'frozen' | 'unknown'; balance?: bigint }> {
+    try {
+        const st = await withTimeout(
+            withRateLimit(() => client.getContractState(address)),
+            API_TIMEOUT,
+            `Reading account state for ${address.toString()}`,
+        );
+        if (st.state === 'active') return { kind: 'active', balance: st.balance };
+        if (st.state === 'frozen') return { kind: 'frozen', balance: st.balance };
+        return { kind: 'uninit', balance: st.balance };
+    } catch {
+        // 429 / timeout / 5xx — provider health, NOT a verdict on the account.
+        return { kind: 'unknown' };
+    }
+}
+
+/**
+ * Wait for the masterchain keeper to become ACTIVE, resilient to a throttled (429) RPC
+ * pool. Returns the last CONCRETE observation so the caller can give a precise message:
+ *  - 'active'  → published OK;
+ *  - 'uninit'/'frozen' → it received value but never initialized (init hash != address,
+ *                or the init-bearing message never landed) — a real failure;
+ *  - 'unknown' → the RPC never gave a clean read (set an API key / pin an endpoint).
+ */
+async function waitForKeeperActive(
+    client: TonClient,
+    address: Address,
+    withRateLimit: <T>(fn: () => Promise<T>) => Promise<T>,
+    windowMs: number = 210_000,
+    cadenceMs: number = 4_000,
+): Promise<{ active: boolean; lastConcrete: 'uninit' | 'frozen' | 'none'; balance?: bigint }> {
+    const deadline = Date.now() + windowMs;
+    let lastConcrete: 'uninit' | 'frozen' | 'none' = 'none';
+    let balance: bigint | undefined;
+    while (Date.now() < deadline) {
+        const st = await readAccountState(client, address, withRateLimit);
+        if (st.kind === 'active') return { active: true, lastConcrete, balance: st.balance };
+        if (st.kind === 'uninit' || st.kind === 'frozen') {
+            lastConcrete = st.kind;
+            balance = st.balance;
+        }
+        // 'unknown' (RPC error): keep waiting — do NOT treat as undeployed.
+        await sleep(cadenceMs);
+    }
+    return { active: false, lastConcrete, balance };
 }
 
 async function getSeqno(
@@ -684,11 +752,16 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
     // Escape hatch for a degraded public testnet pool (e.g. a liteserver that can't
     // parse a network config param and rejects every external message): pin a
     // known-good RPC. The override URL must carry its own auth (api_key in the URL).
-    const customRpcEndpoint = (process.env.TON_RPC_ENDPOINT || '').trim();
+    // Precedence: --rpc-endpoint > DEPLOY_RPC_ENDPOINT > TON_RPC_ENDPOINT. Pinning a single
+    // keyed endpoint avoids the keyless-provider 429 storm that can stall a (keeper) confirm.
+    const customRpcEndpoint = (
+        options.rpcEndpoint || process.env.DEPLOY_RPC_ENDPOINT || process.env.TON_RPC_ENDPOINT || ''
+    ).trim();
     if (customRpcEndpoint) {
         pm.setCustomEndpoint(customRpcEndpoint);
         usingCustomEndpoint = true;
-        console.log('Using custom RPC endpoint override from TON_RPC_ENDPOINT (provider rotation disabled)');
+        console.log('Using custom RPC endpoint override (provider rotation disabled). Source: '
+            + (options.rpcEndpoint ? '--rpc-endpoint' : process.env.DEPLOY_RPC_ENDPOINT ? 'DEPLOY_RPC_ENDPOINT' : 'TON_RPC_ENDPOINT'));
     }
 
     const { client, withRateLimit } = await getTonClientWithRateLimit(pm);
@@ -854,28 +927,52 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
         if (options.librarySelection.enabled) {
             const realCodes = wrapped.map((w) => compiled[w.field]);
             const keeper = buildKeeperStateInit(realCodes, keyPair.publicKey);
+            // Mandatory pre-send gate: the StateInit the deploy message will carry MUST hash
+            // to the keeper address (libraries included), else the masterchain ignores the
+            // init and the funded account stays uninit. Refuse to send on mismatch.
+            assertInitParity(keeper);
             console.log('');
             console.log(`Deploying masterchain library keeper at ${keeper.address.toString()} (wc ${KEEPER_WORKCHAIN})`);
+            console.log(`  init hash == address: ${keeper.initCell.hash().toString('hex')} (parity OK)`);
             console.log(`Publishing ${realCodes.length} librar${realCodes.length === 1 ? 'y' : 'ies'}: ${wrapped.map((w) => w.name).join(', ')}`);
             console.log(`Keeper funding: ${(Number(KEEPER_FUNDING) / 1e9).toFixed(4)} TON`);
 
-            if (!(await isContractDeployed(client, keeper.address, withRateLimit))) {
+            const already = await readAccountState(client, keeper.address, withRateLimit);
+            if (already.kind === 'active') {
+                console.log('Library keeper already active (libraries already published).');
+            } else {
+                if (already.kind === 'uninit' && (already.balance ?? 0n) > 0n) {
+                    // Recovery path: a prior attempt funded the address but it stayed uninit.
+                    // The corrected, parity-checked init targets the SAME address and will
+                    // initialize the existing funded account.
+                    console.log(`Keeper is uninit with ${(Number(already.balance) / 1e9).toFixed(4)} TON already on it — the parity-checked init will initialize it (funds absorbed).`);
+                }
                 await withTimeout(
                     sendTransaction(client, wallet, keyPair, keeper.address, KEEPER_FUNDING, withRateLimit, undefined, keeper.stateInit),
                     DEPLOYMENT_TIMEOUT,
                     'Deploying library keeper',
                 );
-                const keeperActive = await waitForDeploy(client, keeper.address, withRateLimit, 30);
-                if (!keeperActive) {
+                // RPC-resilient confirm: 429/timeout does NOT count as "not deployed".
+                const res = await waitForKeeperActive(client, keeper.address, withRateLimit);
+                if (!res.active) {
+                    if (res.lastConcrete === 'uninit' || res.lastConcrete === 'frozen') {
+                        throw new Error(
+                            `Library keeper at ${keeper.address.toString()} received the deploy but stayed ` +
+                            `${res.lastConcrete.toUpperCase()} (balance ${((Number(res.balance ?? 0n)) / 1e9).toFixed(4)} TON). ` +
+                            `The init parity check passed locally, so the delivered init matched the address — ` +
+                            `this means the masterchain rejected the StateInit-published libraries (real ` +
+                            `stop condition: capture the compute/skip reason). Funds are safe at this address; ` +
+                            `do NOT deploy library children.`,
+                        );
+                    }
                     throw new Error(
-                        `Library keeper not confirmed active on wc ${KEEPER_WORKCHAIN} after 60s. If the ` +
-                        `provider rejected the cross-workchain (-1) deploy, this is the documented Phase-2 ` +
-                        `tooling stop condition — STOP and report (do not deploy library children).`,
+                        `Could not confirm the library keeper at ${keeper.address.toString()} within the ` +
+                        `confirm window — the RPC pool never returned a clean account read (429/timeout). ` +
+                        `The deploy is idempotent: set TONCENTER_API_KEY (and/or pin --rpc-endpoint / ` +
+                        `DEPLOY_RPC_ENDPOINT to a keyed endpoint) and re-run; it will re-target the SAME address.`,
                     );
                 }
                 console.log('✓ Library keeper deployed + active — global library published.');
-            } else {
-                console.log('Library keeper already deployed (libraries already published).');
             }
             await sleep(TRANSACTION_WAIT_TIME);
 
@@ -1418,11 +1515,16 @@ async function retroUpdate(options: CliOptions): Promise<void> {
     const pm = ProviderManager.getInstance();
     await pm.init(network as ProviderNetwork);
     activeProviderManager = pm;
-    const customRpcEndpoint = (process.env.TON_RPC_ENDPOINT || '').trim();
+    // Precedence: --rpc-endpoint > DEPLOY_RPC_ENDPOINT > TON_RPC_ENDPOINT. Pinning a single
+    // keyed endpoint avoids the keyless-provider 429 storm that can stall a (keeper) confirm.
+    const customRpcEndpoint = (
+        options.rpcEndpoint || process.env.DEPLOY_RPC_ENDPOINT || process.env.TON_RPC_ENDPOINT || ''
+    ).trim();
     if (customRpcEndpoint) {
         pm.setCustomEndpoint(customRpcEndpoint);
         usingCustomEndpoint = true;
-        console.log('Using custom RPC endpoint override from TON_RPC_ENDPOINT (provider rotation disabled)');
+        console.log('Using custom RPC endpoint override (provider rotation disabled). Source: '
+            + (options.rpcEndpoint ? '--rpc-endpoint' : process.env.DEPLOY_RPC_ENDPOINT ? 'DEPLOY_RPC_ENDPOINT' : 'TON_RPC_ENDPOINT'));
     }
     const { client, withRateLimit } = await getTonClientWithRateLimit(pm);
     console.log(`Connected to: ${await pm.getEndpoint()}`);
