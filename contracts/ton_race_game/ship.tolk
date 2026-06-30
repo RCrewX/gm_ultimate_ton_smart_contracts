@@ -219,7 +219,11 @@ fun onInternalMessage(in: InMessage) {
             assert (storage.fastTravelInfo != null) throw ERR_FAST_TRAVEL_INFO_NOT_INITIALIZED;
             var fastTravelInfo: FastTravelInfo = lazy storage.fastTravelInfo!.load();
             
-            // TODO: Calculate travel cost correctly (make it more effective than move?)
+            // OPEN DESIGN QUESTION (tracked in the loose-ends result, 2026-06-30): travelCost below
+            // is triangular in target y (y*(y-1)/2) and is charged against enrichedFuelAmount; a
+            // single normal move consumes NO fuel. Whether hard travel should cost less fuel-per-cell
+            // than N single moves ("more effective than move") is an unresolved economics decision —
+            // NOT changed here.
             // Note: x can be negative (already validated above), but y must be >= 0 (already validated as y > 2)
             assert (msg.xy.y >= y_zero) throw ERR_WRONG_XY;
             var travelCost = msg.xy.y * (msg.xy.y - 1) / 2 as coins;
@@ -244,9 +248,16 @@ fun onInternalMessage(in: InMessage) {
             }.toCell();
 
 
-            // The dirtiest hack you ever seen
-            // It works because of the way the compiler optimizes the code
-            // DO NOT REMOVE THIS HACK
+            // Launch the hard-travel walk from the ORIGIN (0,0) coordinate cell: the ship is
+            // asserted to be at origin above (gameFields.xy == x_zero/y_zero) and the TravelToCC
+            // receiver also asserts storage.xy == (0,0). The real destination rides in moveData.xy
+            // (bodyCell above); the origin cell forwards a Move toward it.
+            // x_z/y_z are a typed zero (X_TYPE - X_TYPE, Y_TYPE - Y_TYPE), functionally identical to
+            // passing x_zero/y_zero — verified: hard-travel specs pass with either form, since the
+            // derived destination address depends only on the (0,0) value + the coordinate-cell
+            // StateInit, not on this ship's code. (The two forms compile to slightly different
+            // bytecode, so switching to x_zero/y_zero would shift the Ship code hash → redeploy;
+            // kept as-is here to preserve the deployed hash.)
             val x_z = msg.xy.x - msg.xy.x;
             val y_z = msg.xy.y - msg.xy.y;
 
