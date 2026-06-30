@@ -17,7 +17,7 @@
  * No new compiled contract: we reuse `WalletContractV4` code (per the plan's "no new
  * compile target" constraint).
  */
-import { beginCell, Cell, Dictionary, DictionaryValue, contractAddress, toNano, StateInit } from '@ton/core';
+import { beginCell, Cell, Dictionary, DictionaryValue, Address, toNano, StateInit, storeStateInit } from '@ton/core';
 import { WalletContractV4 } from '@ton/ton';
 
 /** Generous testnet default: masterchain deploy + an initial library-rent reserve. */
@@ -66,8 +66,10 @@ export function buildLibrariesDict(realCodes: Cell[]): Dictionary<bigint, Simple
 export interface KeeperPlan {
     /** Full StateInit (code = wallet, data = wallet init, libraries = published codes). */
     stateInit: StateInit;
-    /** The keeper account address on workchain -1 (derived from the full StateInit). */
-    address: ReturnType<typeof contractAddress>;
+    /** The keeper account address on workchain -1 (= hash of `initCell`). */
+    address: Address;
+    /** The exact init cell whose hash IS the keeper address (single source of truth). */
+    initCell: Cell;
     /** The libraries dictionary (also usable as sandbox `blockchain.libs` source). */
     libraries: Dictionary<bigint, SimpleLibrary>;
     /** Published codes, in input order: the global-library dict key = the code's repr hash. */
@@ -93,10 +95,14 @@ export function buildKeeperStateInit(realCodes: Cell[], deployerPublicKey: Buffe
         data: keeperWallet.init.data,
         libraries,
     };
-    const address = contractAddress(KEEPER_WORKCHAIN, stateInit);
+    // Single source of truth: build the init cell ONCE (with libraries) and derive the
+    // address from THAT exact cell's hash. The address and the delivered deploy init are
+    // then guaranteed to use the same serialization (asserted again at send time).
+    const initCell = storeKeeperStateInitCell(stateInit);
+    const address = new Address(KEEPER_WORKCHAIN, initCell.hash());
     // The global library dict is keyed by each code's representation hash.
     const entries = realCodes.map((code) => ({ codeHash: code.hash().toString('hex') }));
-    return { stateInit, address, libraries, entries };
+    return { stateInit, address, initCell, libraries, entries };
 }
 
 /**
@@ -116,4 +122,36 @@ export function storeKeeperStateInitCell(init: StateInit): Cell {
         b.storeBit(0);
     }
     return b.endCell();
+}
+
+/**
+ * Mandatory pre-send gate: the StateInit the wallet send path will actually serialize
+ * (via @ton/core `storeStateInit`, inside `internal()` → `createTransfer`) MUST hash to
+ * the keeper address. If it does not, the delivered init would not match the destination,
+ * the masterchain would ignore it, and the (funded) account would stay uninit — the exact
+ * failure this whole fix guards against. Throw (refuse to send) on any mismatch.
+ *
+ * NOTE: against the current @ton/core@0.62 this always passes (verified: `storeStateInit`
+ * serializes `libraries`, identical to `storeKeeperStateInitCell`). The assert exists so a
+ * future version skew or serializer change can never silently ship a library-less init again.
+ */
+export function assertInitParity(plan: KeeperPlan): void {
+    const addrHash = plan.address.hash.toString('hex');
+    // 1) the single-source init cell must hash to the address (it is the address by construction).
+    if (plan.initCell.hash().toString('hex') !== addrHash) {
+        throw new Error(`Keeper init parity: initCell hash != address (internal inconsistency).`);
+    }
+    // 2) the cell the WALLET SEND will attach (storeStateInit) must hash to the address too.
+    const deliverable = beginCell().store(storeStateInit(plan.stateInit)).endCell();
+    if (deliverable.hash().toString('hex') !== addrHash) {
+        throw new Error(
+            `Keeper init parity FAILED: the deploy message's StateInit hashes to ` +
+            `${deliverable.hash().toString('hex').slice(0, 16)}… but the keeper address is ` +
+            `${addrHash.slice(0, 16)}… — the delivered init does not carry the libraries. ` +
+            `Refusing to send (the keeper would stay uninit).`,
+        );
+    }
+    if (!plan.stateInit.libraries || plan.stateInit.libraries.size === 0) {
+        throw new Error('Keeper init parity: stateInit has no libraries — nothing to publish.');
+    }
 }
