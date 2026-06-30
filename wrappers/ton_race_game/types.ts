@@ -20,7 +20,7 @@ export const GAS_COST_SEND_MOVE = toNano("1");
 // Internal message gas costs (from test results, with buffer)
 export const GAS_COST_MOVE_SHIP_TO_CC = toNano("0.12"); // Ship -> CoordinateCell (MoveShipToCC) - estimated from move flow
 /** Minimum value for RequestToMove (move execution; mint via RequestShipToMint). */
-export const TODO_TOTAL_GAS_TO_MOVE = GAS_COST_REQUEST_TO_MOVE + GAS_COST_MOVE_SHIP_TO_CC + BASIC_STORAGE_TAX;
+export const TOTAL_GAS_TO_MOVE = GAS_COST_REQUEST_TO_MOVE + GAS_COST_MOVE_SHIP_TO_CC + BASIC_STORAGE_TAX;
 export const GAS_COST_MOVE = toNano("0.12"); // CoordinateCell -> CoordinateCell (Move) - estimated from move flow
 export const GAS_COST_MOVE_END = toNano("0.06"); // CoordinateCell -> Ship (MoveEnd) - estimated
 export const GAS_COST_REQUEST_MINT = toNano("0.22"); // Ship -> Game (RequestMint) - includes MINT_TON_AMOUNT (0.2) + gas

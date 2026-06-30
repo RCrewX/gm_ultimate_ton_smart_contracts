@@ -49,7 +49,7 @@ const GAS_COST_MOVE_END = toNano('0.06');
 const PER_MOVE_GAS = GAS_COST_REQUEST_TO_MOVE + GAS_COST_MOVE_SHIP_TO_CC + GAS_COST_MOVE + GAS_COST_MOVE_END; // 0.36
 
 // Value ATTACHED to each move: full-chain gas × 1.5 margin (well above the contract's
-// TODO_TOTAL_GAS_TO_MOVE = 0.19 floor). The unspent part cashes back to the pilot wallet, so a
+// TOTAL_GAS_TO_MOVE = 0.19 floor). The unspent part cashes back to the pilot wallet, so a
 // generous attach does NOT inflate the hold-requirement — it just round-trips.
 const MOVE_VALUE = (PER_MOVE_GAS * 3n) / 2n;          // 0.54 TON  (was 1 — over-attached; excess merely recycled)
 

@@ -3,7 +3,7 @@ import { toNano } from '@ton/core';
 import '@ton/test-utils';
 import { ContractSystem, initContractSystem, cleanupContractSystem } from '../test_utils';
 import { MoveMode } from '../../wrappers/ton_race_game/structs';
-import { Opcodes, TODO_TOTAL_GAS_TO_MOVE, GAS_COST_REQUEST_MINT, GAS_COST_ANY_MESSAGE } from '../../wrappers/ton_race_game/types';
+import { Opcodes, TOTAL_GAS_TO_MOVE, GAS_COST_REQUEST_MINT, GAS_COST_ANY_MESSAGE } from '../../wrappers/ton_race_game/types';
 import { Opcodes as GameManagerOpcodes } from '../../wrappers/game_manager/types';
 import { JettonMinter } from '../../wrappers/tep/jetton/JettonMinter';
 import { JettonWallet } from '../../wrappers/tep/jetton/JettonWallet';
@@ -25,7 +25,7 @@ describe('Jetton Minting', () => {
 
         // Do several moves to accumulate rewards
         // Move 1: UP from (0,0) to (0,1)
-        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
+        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
         let gameData = await SC_System.ownerShip.getCurrentGameData();
         expect(gameData).not.toBeNull();
         if (gameData) {
@@ -34,7 +34,7 @@ describe('Jetton Minting', () => {
         }
 
         // Move 2: UP from (0,1) to (0,2)
-        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
+        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
         gameData = await SC_System.ownerShip.getCurrentGameData();
         expect(gameData).not.toBeNull();
         if (gameData) {
@@ -42,7 +42,7 @@ describe('Jetton Minting', () => {
         }
 
         // Move 3: RIGHT from (0,2) to (1,3)
-        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.RIGHT);
+        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.RIGHT);
         gameData = await SC_System.ownerShip.getCurrentGameData();
         expect(gameData).not.toBeNull();
         if (gameData) {
@@ -51,7 +51,7 @@ describe('Jetton Minting', () => {
         }
 
         // Move 4: RIGHT from (1,3) to (2,4)
-        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.RIGHT);
+        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.RIGHT);
         gameData = await SC_System.ownerShip.getCurrentGameData();
         expect(gameData).not.toBeNull();
         if (gameData) {
@@ -60,7 +60,7 @@ describe('Jetton Minting', () => {
         }
 
         // Move 5: RIGHT from (2,4) to (3,5)
-        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.RIGHT);
+        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.RIGHT);
         gameData = await SC_System.ownerShip.getCurrentGameData();
         expect(gameData).not.toBeNull();
         if (gameData) {
@@ -69,7 +69,7 @@ describe('Jetton Minting', () => {
         }
 
         // Move 6: RIGHT from (3,5) to (4,6)
-        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.RIGHT);
+        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.RIGHT);
         gameData = await SC_System.ownerShip.getCurrentGameData();
         expect(gameData).not.toBeNull();
         if (gameData) {
@@ -165,10 +165,10 @@ describe('Jetton Minting', () => {
 
     it('Test mint flow - verify jettons go to user wallet and excesses to receiver (may Fail)', async () => {
         // Do a few moves to accumulate some rewards
-        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
-        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
-        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
-        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
+        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
+        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
+        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
+        SC_System.messageResult = await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
         
         // Get accumulated amount
         let gameData = await SC_System.ownerShip.getCurrentGameData();

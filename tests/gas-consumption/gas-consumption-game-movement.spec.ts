@@ -3,7 +3,7 @@ import { beginCell, fromNano, toNano } from "@ton/core";
 import '@ton/test-utils';
 import { ContractSystem, initContractSystem, cleanupContractSystem } from '../test_utils';
 import { MoveMode } from '../../wrappers/ton_race_game/structs';
-import { Opcodes, GAS_COST_REQUEST_TO_MOVE, GAS_COST_MOVE_SHIP_TO_CC, GAS_COST_MOVE, GAS_COST_MOVE_END, GAS_COST_REQUEST_MINT, MINT_TON_AMOUNT, TODO_TOTAL_GAS_TO_MOVE } from '../../wrappers/ton_race_game/types';
+import { Opcodes, GAS_COST_REQUEST_TO_MOVE, GAS_COST_MOVE_SHIP_TO_CC, GAS_COST_MOVE, GAS_COST_MOVE_END, GAS_COST_REQUEST_MINT, MINT_TON_AMOUNT, TOTAL_GAS_TO_MOVE } from '../../wrappers/ton_race_game/types';
 import { CoordinateCell } from '../../wrappers/ton_race_game/CoordinateCell';
 import { writeGasCosts } from '../../lib/buildOutput';
 
@@ -39,7 +39,7 @@ describe("Gas Prices - Game Movement", () => {
 
         let initial_balance = await SC_System.ownerAccount.getBalance();
         let little_less_than_gas_needed = toNano('0.01');
-        let gas_sent = TODO_TOTAL_GAS_TO_MOVE;
+        let gas_sent = TOTAL_GAS_TO_MOVE;
 
         SC_System.messageResult = await SC_System.ownerShip.sendMove(
             SC_System.ownerAccount.getSender(),
@@ -90,7 +90,7 @@ describe("Gas Prices - Game Movement", () => {
 
         SC_System.messageResult = await SC_System.ownerShip.sendMove(
             SC_System.ownerAccount.getSender(),
-            TODO_TOTAL_GAS_TO_MOVE,
+            TOTAL_GAS_TO_MOVE,
             MoveMode.UP
         );
 
@@ -147,7 +147,7 @@ describe("Gas Prices - Game Movement", () => {
 
         SC_System.messageResult = await SC_System.ownerShip.sendMove(
             SC_System.ownerAccount.getSender(),
-            TODO_TOTAL_GAS_TO_MOVE,
+            TOTAL_GAS_TO_MOVE,
             MoveMode.UP
         );
 
@@ -199,7 +199,7 @@ describe("Gas Prices - Game Movement", () => {
 
         SC_System.messageResult = await SC_System.ownerShip.sendMove(
             SC_System.ownerAccount.getSender(),
-            TODO_TOTAL_GAS_TO_MOVE,
+            TOTAL_GAS_TO_MOVE,
             MoveMode.UP
         );
 
@@ -243,14 +243,14 @@ describe("Gas Prices - Game Movement", () => {
             });
         }
 
-        await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
-        await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
-        await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
+        await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
+        await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
+        await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
 
         let gameData = await SC_System.ownerShip.getCurrentGameData();
         if (!gameData || !gameData.jettonAmount || gameData.jettonAmount === 0n) {
-            await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
-            await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
+            await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
+            await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
             gameData = await SC_System.ownerShip.getCurrentGameData();
         }
         if (!gameData || !gameData.jettonAmount || gameData.jettonAmount === 0n) {
@@ -264,8 +264,8 @@ describe("Gas Prices - Game Movement", () => {
         
         const currentHp = gameData?.hp || 0n;
         if (currentHp <= 10n) {
-            await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
-            await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TODO_TOTAL_GAS_TO_MOVE, MoveMode.UP);
+            await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
+            await SC_System.ownerShip.sendMove(SC_System.ownerAccount.getSender(), TOTAL_GAS_TO_MOVE, MoveMode.UP);
             gameData = await SC_System.ownerShip.getCurrentGameData();
         }
 
@@ -280,7 +280,7 @@ describe("Gas Prices - Game Movement", () => {
 
         SC_System.messageResult = await SC_System.ownerShip.sendMove(
             SC_System.ownerAccount.getSender(),
-            TODO_TOTAL_GAS_TO_MOVE,
+            TOTAL_GAS_TO_MOVE,
             MoveMode.EXIT
         );
 
