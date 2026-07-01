@@ -869,21 +869,33 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
         const testnetAddresses = addrFor(network === 'testnet' ? effective : compiled, true);
         const mainnetAddresses = addrFor(network === 'mainnet' ? effective : compiled, false);
 
+        // The ACTIVE network's block. Library-cell mode is now PER-NETWORK (schema v12):
+        // `libraryMode`/`librarians` live in this block, beside the other addresses.
+        //  - Library ON  → set libraryMode:true; the `librarians` list is filled in after the
+        //                  Librarians deploy below (overwriting any prior list for this net).
+        //  - Library OFF → CARRY FORWARD the prior `libraryMode`/`librarians` for this net so a
+        //                  non-library (or retro) redeploy never DROPS the live publisher
+        //                  addresses uap monitors. Absent entirely if the net never librarized.
+        const activeAddresses = network === 'testnet' ? testnetAddresses : mainnetAddresses;
+        const activeBlock: NetworkDeploymentData = {
+            ...activeAddresses,
+            status: 'in_progress',
+            libraryMode: options.librarySelection.enabled ? true : existingData[network].libraryMode,
+            librarians: options.librarySelection.enabled ? undefined : existingData[network].librarians,
+        };
+
         // Initialize deployment data
         const deploymentData: DeploymentData = {
             timestamp,
-            // Library-cell deploy mode flag (the `librarians` list is filled in after the
-            // Librarians deploy below). Omitted entirely on a legacy deploy.
-            libraryMode: options.librarySelection.enabled ? true : undefined,
             // Non-secret constants (opcodes/errors/gas/amounts/enums) for sibling
             // projects. Placed between `timestamp` and `contractCodes`.
             constants: buildGameConstants(),
             contractCodes,
             testnet: network === 'testnet'
-                ? { ...testnetAddresses, status: 'in_progress' }
+                ? activeBlock
                 : existingData.testnet.deployed ? existingData.testnet : testnetAddresses,
             mainnet: network === 'mainnet'
-                ? { ...mainnetAddresses, status: 'in_progress' }
+                ? activeBlock
                 : existingData.mainnet.deployed ? existingData.mainnet : mainnetAddresses,
         };
 
@@ -996,11 +1008,14 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
                     name: w.name,
                     address: formatAddress(plan.address, isTestnet),
                     codeHash: plan.codeHash,
+                    // admin == the librarian's admin (the deployer/owner) — the top-up target.
+                    admin: ownerAddress.toString({ bounceable: true, urlSafe: true, testOnly: isTestnet }),
                 });
             }
             await sleep(TRANSACTION_WAIT_TIME);
 
-            deploymentData.librarians = librarians;
+            // Per-network (schema v12): the publisher list lives in the active network's block.
+            networkData.librarians = librarians;
             writeFullDeploymentData(deploymentData);
         }
 
