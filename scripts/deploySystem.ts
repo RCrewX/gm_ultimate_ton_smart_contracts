@@ -80,8 +80,14 @@ import { verifyDeploymentHashes } from './lib/verifyDeploymentHashes';
 import {
     ProviderManager,
     getTonClientWithRateLimit,
+    redactUrl,
     type Network as ProviderNetwork,
 } from 'ton-provider-system';
+import {
+    resolveCustomEndpoint,
+    poolEndpointWarning,
+    type ResolvedCustomEndpoint,
+} from './lib/rpcEndpoint';
 
 // Load environment variables
 dotenv.config();
@@ -118,6 +124,8 @@ interface CliOptions {
     librarySelection: LibrarySelection;
     /** Pin a single keyed RPC endpoint for the whole deploy (disables provider rotation). */
     rpcEndpoint?: string;
+    /** Optional header API key for the pinned endpoint (e.g. Tatum `x-api-key`). */
+    rpcApiKey?: string;
 }
 
 function parseCliArgs(): CliOptions {
@@ -133,6 +141,7 @@ function parseCliArgs(): CliOptions {
     let cliNoLibrary: boolean | undefined;
     let cliLibraryCodes: string | undefined;
     let rpcEndpoint: string | undefined;
+    let rpcApiKey: string | undefined;
 
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
@@ -160,6 +169,8 @@ function parseCliArgs(): CliOptions {
             cliLibraryCodes = args[++i];
         } else if (arg === '--rpc-endpoint' && args[i + 1]) {
             rpcEndpoint = args[++i];
+        } else if (arg === '--rpc-api-key' && args[i + 1]) {
+            rpcApiKey = args[++i];
         } else if (arg === '--dry-run') {
             dryRun = true;
         } else if (arg === '--yes' || arg === '-y') {
@@ -204,9 +215,16 @@ Options:
                   Comma-separated selector list to librarize (implies --library).
                   Default: jettonWallet,ship,coordinateCell. Singletons are rejected.
   --rpc-endpoint <url>
-                  Pin ONE keyed RPC endpoint for the whole deploy (disables provider
-                  rotation). Beats DEPLOY_RPC_ENDPOINT / TON_RPC_ENDPOINT. Use a keyed
-                  endpoint to avoid the keyless-provider 429 storm during confirms.
+                  Pin ONE RPC endpoint for the whole deploy (disables provider rotation;
+                  the pinned URL is used verbatim). Beats DEPLOY_RPC_ENDPOINT /
+                  TON_RPC_ENDPOINT. Put auth in the URL for toncenter
+                  (…/api/v2/jsonRPC?api_key=<KEY>). Tatum needs a HEADER key — pin its URL
+                  AND pass --rpc-api-key. Pinning avoids the keyless-provider 429 storm and
+                  the unresolved-{key} pool 404 during confirms.
+  --rpc-api-key <key>
+                  Header API key (x-api-key) attached to the pinned endpoint's client.
+                  Needed to pin a Tatum endpoint (whose key is header-based, not in the
+                  URL). Beaten by nothing; also settable via DEPLOY_RPC_API_KEY.
   --id <n>        Ship station ID (default: 1)
   --help, -h      Show this help
 
@@ -215,8 +233,11 @@ Environment Variables:
   MNEMONIC             24-word mnemonic (alternative to PRIVATE_KEY)
   JETTON_CONTENT_URI   Jetton metadata URI
   OWNER_PUBLIC_KEY     Public key for external signatures
-  DEPLOY_RPC_ENDPOINT  Pin one keyed RPC endpoint (same as --rpc-endpoint)
+  DEPLOY_RPC_ENDPOINT  Pin one RPC endpoint (same as --rpc-endpoint)
+  DEPLOY_RPC_API_KEY   Header API key for the pinned endpoint (same as --rpc-api-key)
   TON_RPC_ENDPOINT     Legacy RPC endpoint override (lowest precedence)
+  CHAINSTACK_KEY_<NET> Resolves the pooled chainstack provider (e.g. CHAINSTACK_KEY_TESTNET);
+                       unset ⇒ its URL keeps a literal {key} placeholder and 404s
 
 Examples:
   pnpm deploy                     # testnet, RETRO (incremental)
@@ -246,7 +267,7 @@ Examples:
         libraryCodes: cliLibraryCodes,
     });
 
-    return { network, shipStationId, offline, mode, dryRun, assumeYes, librarySelection, rpcEndpoint };
+    return { network, shipStationId, offline, mode, dryRun, assumeYes, librarySelection, rpcEndpoint, rpcApiKey };
 }
 
 // ============================================================================
@@ -377,6 +398,7 @@ async function readAccountState(
     withRateLimit: <T>(fn: () => Promise<T>) => Promise<T>,
 ): Promise<{ kind: 'active' | 'uninit' | 'frozen' | 'unknown'; balance?: bigint }> {
     try {
+        await paceRpcRead();
         const st = await withTimeout(
             withRateLimit(() => client.getContractState(address)),
             API_TIMEOUT,
@@ -414,18 +436,61 @@ async function getSeqno(
 // ProviderManager and rebuild a client against whatever provider it currently
 // considers best, so a 500 from one provider's /sendBoc is genuinely escaped.
 let activeProviderManager: ProviderManager | undefined;
-// Set when an explicit TON_RPC_ENDPOINT override is in effect; that URL carries its
-// own auth, so we must NOT also attach a pooled provider's apiKey header.
+// Set when an explicit endpoint override is pinned. The provider system honors the pin
+// (setCustomEndpoint → getBestProvider short-circuits → getEndpoint returns the pinned URL,
+// query string incl. `?api_key=` preserved). A pinned URL carries its own URL auth, so we
+// do NOT attach a pooled provider's apiKey — but a pinned Tatum endpoint needs a HEADER key,
+// which we attach here from `customApiKey` (--rpc-api-key / DEPLOY_RPC_API_KEY).
 let usingCustomEndpoint = false;
+let customApiKey: string | undefined;
 
 async function clientForCurrentProvider(fallback: TonClient): Promise<TonClient> {
     if (!activeProviderManager) return fallback;
     try {
         const endpoint = await activeProviderManager.getEndpoint();
-        const apiKey = usingCustomEndpoint ? undefined : activeProviderManager.getActiveProvider()?.apiKey;
+        const apiKey = usingCustomEndpoint ? customApiKey : activeProviderManager.getActiveProvider()?.apiKey;
         return new TonClient({ endpoint, apiKey });
     } catch {
         return fallback;
+    }
+}
+
+// Light pacing for on-chain READS so a keyed endpoint (toncenter 10 rps / chainstack /
+// Tatum) isn't self-429'd by a burst of back-to-back confirm/probe reads. The provider
+// system's token bucket is the primary limiter; this just enforces a small floor gap
+// between reads that fire outside a polling loop's own cadence.
+let lastRpcReadAt = 0;
+const MIN_RPC_READ_GAP_MS = 150;
+async function paceRpcRead(): Promise<void> {
+    const wait = lastRpcReadAt + MIN_RPC_READ_GAP_MS - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastRpcReadAt = Date.now();
+}
+
+/**
+ * Resolve + apply a pinned RPC endpoint (if any) to the ProviderManager and the module
+ * state the send/read path reads. Returns the resolved pin, or null for pool mode.
+ * Shared by the hard + retro bootstraps so both honor --rpc-endpoint / --rpc-api-key.
+ */
+function applyPinnedEndpoint(pm: ProviderManager, options: CliOptions): ResolvedCustomEndpoint | null {
+    const pinned = resolveCustomEndpoint(options.rpcEndpoint, options.rpcApiKey);
+    if (!pinned) return null;
+    pm.setCustomEndpoint(pinned.endpoint);
+    usingCustomEndpoint = true;
+    customApiKey = pinned.apiKey;
+    console.log(
+        `Using pinned RPC endpoint (provider rotation disabled). Source: ${pinned.source}`
+        + (pinned.apiKey ? ' (+ header api key)' : ''),
+    );
+    return pinned;
+}
+
+/** Log the connected endpoint (redacting a pinned URL's auth); warn on a {placeholder} pool URL. */
+function logRpcEndpoint(endpoint: string, network: Network, pinned: ResolvedCustomEndpoint | null): void {
+    console.log(`Connected to: ${pinned ? redactUrl(endpoint) : endpoint}`);
+    if (!pinned) {
+        const warn = poolEndpointWarning(endpoint, network);
+        if (warn) console.warn(`⚠️  ${warn}`);
     }
 }
 
@@ -719,24 +784,20 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
     // Let the send path rebuild clients against the current provider on failover.
     activeProviderManager = pm;
 
-    // Escape hatch for a degraded public testnet pool (e.g. a liteserver that can't
-    // parse a network config param and rejects every external message): pin a
-    // known-good RPC. The override URL must carry its own auth (api_key in the URL).
-    // Precedence: --rpc-endpoint > DEPLOY_RPC_ENDPOINT > TON_RPC_ENDPOINT. Pinning a single
-    // keyed endpoint avoids the keyless-provider 429 storm that can stall a (keeper) confirm.
-    const customRpcEndpoint = (
-        options.rpcEndpoint || process.env.DEPLOY_RPC_ENDPOINT || process.env.TON_RPC_ENDPOINT || ''
-    ).trim();
-    if (customRpcEndpoint) {
-        pm.setCustomEndpoint(customRpcEndpoint);
-        usingCustomEndpoint = true;
-        console.log('Using custom RPC endpoint override (provider rotation disabled). Source: '
-            + (options.rpcEndpoint ? '--rpc-endpoint' : process.env.DEPLOY_RPC_ENDPOINT ? 'DEPLOY_RPC_ENDPOINT' : 'TON_RPC_ENDPOINT'));
-    }
+    // Escape hatch for a degraded public testnet pool (e.g. a liteserver that rejects every
+    // external message, or a pooled provider whose key env is unset → {key} placeholder →
+    // 404): pin a known-good RPC. The provider system honors the pin (getBestProvider
+    // short-circuits on it), so getEndpoint + every rebuilt client use the pinned URL.
+    // Precedence: --rpc-endpoint > DEPLOY_RPC_ENDPOINT > TON_RPC_ENDPOINT.
+    const pinned = applyPinnedEndpoint(pm, options);
 
-    const { client, withRateLimit } = await getTonClientWithRateLimit(pm);
+    const { client: pooledClient, withRateLimit } = await getTonClientWithRateLimit(pm);
+    // When pinned, rebuild the client via clientForCurrentProvider so it carries the pinned
+    // endpoint AND the header api key (getTonClientWithRateLimit's client has no apiKey for a
+    // custom provider — Tatum's header key would otherwise be lost).
+    const client = pinned ? await clientForCurrentProvider(pooledClient) : pooledClient;
     const endpoint = await pm.getEndpoint();
-    console.log(`Connected to: ${endpoint}`);
+    logRpcEndpoint(endpoint, network, pinned);
     console.log('');
 
     // Load wallet
@@ -1471,19 +1532,13 @@ async function retroUpdate(options: CliOptions): Promise<void> {
     const pm = ProviderManager.getInstance();
     await pm.init(network as ProviderNetwork);
     activeProviderManager = pm;
-    // Precedence: --rpc-endpoint > DEPLOY_RPC_ENDPOINT > TON_RPC_ENDPOINT. Pinning a single
-    // keyed endpoint avoids the keyless-provider 429 storm that can stall a (keeper) confirm.
-    const customRpcEndpoint = (
-        options.rpcEndpoint || process.env.DEPLOY_RPC_ENDPOINT || process.env.TON_RPC_ENDPOINT || ''
-    ).trim();
-    if (customRpcEndpoint) {
-        pm.setCustomEndpoint(customRpcEndpoint);
-        usingCustomEndpoint = true;
-        console.log('Using custom RPC endpoint override (provider rotation disabled). Source: '
-            + (options.rpcEndpoint ? '--rpc-endpoint' : process.env.DEPLOY_RPC_ENDPOINT ? 'DEPLOY_RPC_ENDPOINT' : 'TON_RPC_ENDPOINT'));
-    }
-    const { client, withRateLimit } = await getTonClientWithRateLimit(pm);
-    console.log(`Connected to: ${await pm.getEndpoint()}`);
+    // Precedence: --rpc-endpoint > DEPLOY_RPC_ENDPOINT > TON_RPC_ENDPOINT. The pin is honored
+    // verbatim by the provider system; it avoids the keyless-provider 429 storm and the
+    // unresolved-{key} pool 404 that can stall a confirm.
+    const pinned = applyPinnedEndpoint(pm, options);
+    const { client: pooledClient, withRateLimit } = await getTonClientWithRateLimit(pm);
+    const client = pinned ? await clientForCurrentProvider(pooledClient) : pooledClient;
+    logRpcEndpoint(await pm.getEndpoint(), network, pinned);
 
     // --- recorded deployment for this network ---
     const netData = readDeploymentData()[network];
