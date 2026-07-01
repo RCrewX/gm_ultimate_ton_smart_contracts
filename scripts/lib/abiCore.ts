@@ -67,6 +67,11 @@ export interface CompiledContracts {
     passportPrinterItemCode: Cell;
     nftPrinterCode: Cell;
     passportPrinterCode: Cell;
+    // Masterchain public-library publisher. Compiled with the set (used by the live
+    // library-mode deploy to build one Librarian per librarized code) but intentionally
+    // NOT published in `buildFullContractCodes` — it is deploy tooling, not part of the
+    // system's on-chain contractCodes, so the default deployment json stays unchanged.
+    librarianCode: Cell;
 }
 
 export async function compileAllContracts(): Promise<CompiledContracts> {
@@ -96,6 +101,7 @@ export async function compileAllContracts(): Promise<CompiledContracts> {
         passportPrinterItemCode: await compile('UniversalBlockchainPassport'),
         nftPrinterCode: await compile('NFTPrinter'),
         passportPrinterCode: await compile('UniversalBlockchainPassportPrinter'),
+        librarianCode: await compile('Librarian'),
     };
 }
 
@@ -380,8 +386,8 @@ export async function buildOfflineDeploymentData(
     );
     return {
         timestamp: new Date().toISOString(),
-        // Only set when on — keeps the default (legacy) json byte-for-byte. The keeper
-        // (libraryKeeper) is a live-deploy artifact; offline has no deployer key.
+        // Only set when on — keeps the default (legacy) json byte-for-byte. The `librarians`
+        // list is a live-deploy artifact (one Librarian per code); offline has no deployer key.
         libraryMode: librarySelection.enabled ? true : undefined,
         constants: buildConstants(),
         contractCodes,

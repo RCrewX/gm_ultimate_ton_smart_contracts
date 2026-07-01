@@ -44,7 +44,7 @@ import {
     NetworkDeploymentData,
     DeploymentData,
     ContractCodes,
-    LibraryKeeperInfo,
+    LibrarianInfo,
     writeFullDeploymentData,
     readDeploymentData,
     formatAddress,
@@ -64,7 +64,7 @@ import {
     resolveLibrarySelectionWithCli,
     type LibrarySelection,
 } from './lib/library';
-import { buildKeeperStateInit, buildKeeperExternalDeploy, assertInitParity, KEEPER_FUNDING, KEEPER_WORKCHAIN } from './lib/libraryKeeper';
+import { buildLibrarianPlan, LIBRARIAN_FUNDING, LIBRARIAN_WORKCHAIN } from './lib/librarian';
 import type { StateInit } from '@ton/core';
 import { detectChanges } from './lib/changeDetection';
 import {
@@ -391,92 +391,6 @@ async function readAccountState(
     }
 }
 
-/**
- * Wait for the masterchain keeper to become ACTIVE, resilient to a throttled (429) RPC
- * pool. Returns the last CONCRETE observation so the caller can give a precise message:
- *  - 'active'  → published OK;
- *  - 'uninit'/'frozen' → it received value but never initialized (init hash != address,
- *                or the init-bearing message never landed) — a real failure;
- *  - 'unknown' → the RPC never gave a clean read (set an API key / pin an endpoint).
- */
-async function waitForKeeperActive(
-    client: TonClient,
-    address: Address,
-    withRateLimit: <T>(fn: () => Promise<T>) => Promise<T>,
-    windowMs: number = 210_000,
-    cadenceMs: number = 4_000,
-): Promise<{ active: boolean; lastConcrete: 'uninit' | 'frozen' | 'none'; balance?: bigint }> {
-    const deadline = Date.now() + windowMs;
-    let lastConcrete: 'uninit' | 'frozen' | 'none' = 'none';
-    let balance: bigint | undefined;
-    while (Date.now() < deadline) {
-        const st = await readAccountState(client, address, withRateLimit);
-        if (st.kind === 'active') return { active: true, lastConcrete, balance: st.balance };
-        if (st.kind === 'uninit' || st.kind === 'frozen') {
-            lastConcrete = st.kind;
-            balance = st.balance;
-        }
-        // 'unknown' (RPC error): keep waiting — do NOT treat as undeployed.
-        await sleep(cadenceMs);
-    }
-    return { active: false, lastConcrete, balance };
-}
-
-/** Wait until an account's balance reaches `minBalance` (funding lands even while uninit). */
-async function waitForKeeperBalance(
-    client: TonClient,
-    address: Address,
-    withRateLimit: <T>(fn: () => Promise<T>) => Promise<T>,
-    minBalance: bigint,
-    windowMs: number = 120_000,
-    cadenceMs: number = 4_000,
-): Promise<boolean> {
-    const deadline = Date.now() + windowMs;
-    while (Date.now() < deadline) {
-        const st = await readAccountState(client, address, withRateLimit);
-        if (st.kind !== 'unknown' && (st.balance ?? 0n) >= minBalance) return true;
-        await sleep(cadenceMs);
-    }
-    return false;
-}
-
-/**
- * Send a pre-built raw external message BoC (e.g. the keeper external self-deploy) with the
- * same provider-failover + 429/5xx retry as `sendTransaction`. Used for the wallet-style
- * external deploy that carries the exact StateInit straight to the destination.
- */
-async function sendExternalRaw(
-    client: TonClient,
-    boc: Buffer,
-    withRateLimit: <T>(fn: () => Promise<T>) => Promise<T>,
-    maxRetries: number = 6,
-): Promise<void> {
-    let lastError: Error | null = null;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        const sendClient = await clientForCurrentProvider(client);
-        try {
-            await withRateLimit(() => sendClient.sendFile(boc));
-            return;
-        } catch (error: any) {
-            lastError = error;
-            const rpcBody = error?.response?.data;
-            const rpcDetail = rpcBody
-                ? ` | RPC: ${typeof rpcBody === 'string' ? rpcBody : JSON.stringify(rpcBody)}`
-                : '';
-            const errorMsg = (error.message || String(error)) + rpcDetail;
-            const isRetryable = /(500|502|503|429|timeout|ECONNRESET|ETIMEDOUT)/.test(errorMsg);
-            if (isRetryable && attempt < maxRetries) {
-                console.warn(`External send attempt ${attempt} failed: ${errorMsg}`);
-                console.warn(`Rotating to next provider, retrying... (attempt ${attempt + 1}/${maxRetries})`);
-                await sleep(Math.min(RETRY_DELAY, 3000));
-                continue;
-            }
-            throw error;
-        }
-    }
-    throw lastError || new Error('External send failed after retries');
-}
-
 async function getSeqno(
     client: TonClient,
     walletAddress: Address,
@@ -523,8 +437,9 @@ async function sendTransaction(
     value: bigint,
     withRateLimit: <T>(fn: () => Promise<T>) => Promise<T>,
     body?: Cell,
-    // Full StateInit (not just {code,data}) so a deploy can carry `libraries` — the
-    // masterchain library keeper publishes its codes via StateInit.libraries.
+    // Full StateInit (not just {code,data}) — kept general so any deploy path can pass a
+    // StateInit. Library publishing is done by the Librarian's runtime SETLIBCODE, NOT via
+    // a StateInit `library` field (the TVM executor rejects that with `cskip_bad_state`).
     stateInit?: StateInit,
     maxRetries: number = 6
 ): Promise<void> {
@@ -896,8 +811,8 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
         // Initialize deployment data
         const deploymentData: DeploymentData = {
             timestamp,
-            // Library-cell deploy mode flag (libraryKeeper is filled in after the keeper
-            // deploys below). Omitted entirely on a legacy deploy.
+            // Library-cell deploy mode flag (the `librarians` list is filled in after the
+            // Librarians deploy below). Omitted entirely on a legacy deploy.
             libraryMode: options.librarySelection.enabled ? true : undefined,
             // Non-secret constants (opcodes/errors/gas/amounts/enums) for sibling
             // projects. Placed between `timestamp` and `contractCodes`.
@@ -975,94 +890,56 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
         // Deploy contracts
         // ================================================================
 
-        // 0. Library keeper (masterchain). ORDER INVARIANT: the real codes must be
-        //    published + resolvable BEFORE any library child (ownerJettonWallet,
-        //    ownerShip, minted wallets) is deployed — a child runs its own code on
-        //    deploy, which a library cell can only resolve once published.
+        // 0. Library publishers (masterchain). ORDER INVARIANT: each real code must be
+        //    published + resolvable BEFORE any library child (ownerJettonWallet, ownerShip,
+        //    minted wallets) is deployed — a child runs its own code on deploy, which a
+        //    library cell can only resolve once its code is published on wc -1.
+        //
+        //    One `Librarian` per librarized code (SETLIBCODE mode 2). Each StateInit is a
+        //    plain {code, data} (NO `library` field), so it deploys via the NORMAL internal
+        //    path and its empty-body deploy message triggers the on-chain publish. This
+        //    supersedes the retired WalletV4-keeper-with-StateInit.libraries approach, which
+        //    the TVM executor rejected (`cskip_bad_state`) — a public library can only be
+        //    published by a running masterchain contract, never via a StateInit `library`.
         if (options.librarySelection.enabled) {
-            const realCodes = wrapped.map((w) => compiled[w.field]);
-            const keeper = buildKeeperStateInit(realCodes, keyPair.publicKey);
-            // Mandatory pre-send gate: the StateInit the deploy message will carry MUST hash
-            // to the keeper address (libraries included), else the masterchain ignores the
-            // init and the funded account stays uninit. Refuse to send on mismatch.
-            assertInitParity(keeper);
+            const librarianCode = compiled.librarianCode;
+            const librarians: LibrarianInfo[] = [];
             console.log('');
-            console.log(`Deploying masterchain library keeper at ${keeper.address.toString()} (wc ${KEEPER_WORKCHAIN})`);
-            console.log(`  init hash == address: ${keeper.initCell.hash().toString('hex')} (parity OK)`);
-            console.log(`Publishing ${realCodes.length} librar${realCodes.length === 1 ? 'y' : 'ies'}: ${wrapped.map((w) => w.name).join(', ')}`);
-            console.log(`Keeper funding: ${(Number(KEEPER_FUNDING) / 1e9).toFixed(4)} TON`);
-
-            const already = await readAccountState(client, keeper.address, withRateLimit);
-            if (already.kind === 'active') {
-                console.log('Library keeper already active (libraries already published).');
-            } else {
-                const bal = already.balance ?? 0n;
-                if (already.kind === 'uninit' && bal > 0n) {
-                    // Recovery: a prior attempt funded the address but it stayed uninit
-                    // (cskip_bad_state). The external self-deploy below initializes it IN PLACE
-                    // at the SAME address, absorbing the stranded balance.
-                    console.log(`Keeper is uninit with ${(Number(bal) / 1e9).toFixed(4)} TON already on it — recovering it in place (external self-deploy).`);
-                }
-                // Branch D — deploy the keeper the STANDARD wallet way: fund it (plain value,
-                // NO init), then send an EXTERNAL self-deploy straight to the wc-1 keeper. This
-                // removes the wc0->wc-1 internal forwarding hop that left the delivered init not
-                // matching the address (cskip_bad_state). An external carries no value, so the
-                // keeper must already hold gas — hence the fund step first.
-                if (bal < KEEPER_FUNDING) {
-                    const topUp = KEEPER_FUNDING - bal;
-                    console.log(`Funding keeper with ${(Number(topUp) / 1e9).toFixed(4)} TON (plain value, no init)...`);
-                    await withTimeout(
-                        sendTransaction(client, wallet, keyPair, keeper.address, topUp, withRateLimit, undefined, undefined),
-                        DEPLOYMENT_TIMEOUT,
-                        'Funding library keeper',
-                    );
-                    if (!(await waitForKeeperBalance(client, keeper.address, withRateLimit, KEEPER_FUNDING))) {
-                        throw new Error(
-                            `Keeper funding not confirmed at ${keeper.address.toString()} (RPC 429/timeout). ` +
-                            `Set TONCENTER_API_KEY / pin --rpc-endpoint and re-run (idempotent, same address).`,
-                        );
-                    }
-                }
-                console.log('Sending EXTERNAL self-deploy (init + signed body) straight to the keeper (no wc0 forwarding)...');
-                const ext = await buildKeeperExternalDeploy(keeper, keyPair);
-                await withTimeout(
-                    sendExternalRaw(client, ext.toBoc(), withRateLimit),
-                    DEPLOYMENT_TIMEOUT,
-                    'External self-deploy of library keeper',
+            console.log(
+                `Publishing ${wrapped.length} librar${wrapped.length === 1 ? 'y' : 'ies'} via one Librarian each ` +
+                `(wc ${LIBRARIAN_WORKCHAIN}, ${(Number(LIBRARIAN_FUNDING) / 1e9).toFixed(4)} TON funding each): ` +
+                `${wrapped.map((w) => w.name).join(', ')}`,
+            );
+            for (const w of wrapped) {
+                // admin = ownerAddress → the deployer can later withdraw the surplus above the
+                // rent floor, re-publish after a rent lapse, or remove the library (recoverable
+                // funds — the fix for the old keeper's stranded ~7.14 TON).
+                const plan = buildLibrarianPlan(compiled[w.field], ownerAddress, librarianCode);
+                console.log('');
+                console.log(
+                    `Deploying Librarian for "${w.name}" at ${plan.address.toString()} ` +
+                    `(publishes code ${plan.codeHash.slice(0, 16)}…)`,
                 );
-                // RPC-resilient confirm: 429/timeout does NOT count as "not deployed".
-                const res = await waitForKeeperActive(client, keeper.address, withRateLimit);
-                if (!res.active) {
-                    if (res.lastConcrete === 'uninit' || res.lastConcrete === 'frozen') {
-                        throw new Error(
-                            `Library keeper at ${keeper.address.toString()} stayed ${res.lastConcrete.toUpperCase()} ` +
-                            `after the EXTERNAL self-deploy (balance ${((Number(res.balance ?? 0n)) / 1e9).toFixed(4)} TON). ` +
-                            `The delivered init was byte-identical to the address (external, no forwarding), so a ` +
-                            `hash mismatch is ruled out — this is now a genuine platform limitation on ` +
-                            `StateInit-published public libraries. Capture the compute/skip reason:\n` +
-                            `  ts-node scripts/diagnoseKeeper.ts --keeper ${keeper.address.toString()} ${isTestnet ? '--testnet' : '--mainnet'}\n` +
-                            `and escalate (LibraryDeployer reference). Funds are safe; do NOT deploy library children.`,
-                        );
-                    }
-                    throw new Error(
-                        `Could not confirm the library keeper at ${keeper.address.toString()} within the ` +
-                        `confirm window — the RPC pool never returned a clean account read (429/timeout). ` +
-                        `The deploy is idempotent: set TONCENTER_API_KEY (and/or pin --rpc-endpoint / ` +
-                        `DEPLOY_RPC_ENDPOINT to a keyed endpoint) and re-run; it will re-target the SAME address.`,
-                    );
-                }
-                console.log('✓ Library keeper deployed + active (external self-deploy) — global library published.');
+                // The plain {code,data} init hashes to the address and initializes normally;
+                // the empty-body deploy message runs SETLIBCODE(code, 2). Idempotent +
+                // RPC-resilient via checkAndDeploy (skips if the librarian is already active).
+                await checkAndDeploy(
+                    client, wallet, keyPair,
+                    plan.address, `Librarian(${w.name})`,
+                    LIBRARIAN_FUNDING,
+                    plan.init,
+                    withRateLimit,
+                );
+                console.log(`✓ Librarian(${w.name}) deployed + active — public library published on wc ${LIBRARIAN_WORKCHAIN}.`);
+                librarians.push({
+                    name: w.name,
+                    address: formatAddress(plan.address, isTestnet),
+                    codeHash: plan.codeHash,
+                });
             }
             await sleep(TRANSACTION_WAIT_TIME);
 
-            deploymentData.libraryKeeper = {
-                address: formatAddress(keeper.address, isTestnet),
-                libraries: wrapped.map((w) => ({
-                    name: w.name,
-                    libraryHash: w.libraryHash,
-                    codeHash: w.codeHash,
-                })),
-            };
+            deploymentData.librarians = librarians;
             writeFullDeploymentData(deploymentData);
         }
 
