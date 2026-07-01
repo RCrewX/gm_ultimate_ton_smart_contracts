@@ -12,6 +12,7 @@
         "test:single": "NODE_OPTIONS='--max-old-space-size=8192 --expose-gc' jest --verbose --runInBand",
         "abi": "ts-node scripts/deploySystem.ts --offline",
         "verify:hashes": "ts-node scripts/lib/verifyDeploymentHashes.ts",
+        "diagnose:keeper": "ts-node scripts/diagnoseKeeper.ts",
         "deploy": "ts-node scripts/deploySystem.ts",
         "deploy:testnet": "ts-node scripts/deploySystem.ts --testnet",
         "deploy:mainnet": "ts-node scripts/deploySystem.ts --mainnet",

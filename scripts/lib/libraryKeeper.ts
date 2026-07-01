@@ -17,7 +17,10 @@
  * No new compiled contract: we reuse `WalletContractV4` code (per the plan's "no new
  * compile target" constraint).
  */
-import { beginCell, Cell, Dictionary, DictionaryValue, Address, toNano, StateInit, storeStateInit } from '@ton/core';
+import {
+    beginCell, Cell, Dictionary, DictionaryValue, Address, toNano, StateInit,
+    storeStateInit, storeMessage, loadMessage, SendMode,
+} from '@ton/core';
 import { WalletContractV4 } from '@ton/ton';
 
 /** Generous testnet default: masterchain deploy + an initial library-rent reserve. */
@@ -154,4 +157,52 @@ export function assertInitParity(plan: KeeperPlan): void {
     if (!plan.stateInit.libraries || plan.stateInit.libraries.size === 0) {
         throw new Error('Keeper init parity: stateInit has no libraries — nothing to publish.');
     }
+}
+
+/**
+ * Branch D — build an EXTERNAL self-deploy message for the keeper.
+ *
+ * The prior deploy sent the keeper's StateInit inside an INTERNAL message forwarded by the
+ * wc0 deployer wallet to the wc-1 keeper; on-chain that left the account uninit with compute
+ * skip reason `cskip_bad_state` (the delivered init did not hash to the address). The keeper
+ * account IS a `WalletContractV4` controlled by the deployer key, so we deploy it the standard
+ * wallet way instead: an **external-in message straight to the keeper address**, carrying the
+ * exact libraried StateInit + a signed (seqno 0) empty transfer body. There is NO intermediate
+ * wc0 forwarding hop and no cross-workchain internal delivery, so the init the validator
+ * applies is byte-identical to the cell whose hash IS the address → the account initializes and
+ * publishes the libraries. The keeper must already hold gas (fund it first with a plain value
+ * transfer — an external message carries no value).
+ */
+export async function buildKeeperExternalDeploy(
+    plan: KeeperPlan,
+    keyPair: { publicKey: Buffer; secretKey: Buffer },
+): Promise<Cell> {
+    const kw = WalletContractV4.create({ publicKey: keyPair.publicKey, workchain: KEEPER_WORKCHAIN });
+    const body = await kw.createTransfer({
+        seqno: 0,
+        secretKey: keyPair.secretKey,
+        messages: [],
+        sendMode: SendMode.PAY_GAS_SEPARATELY,
+    });
+    const ext = beginCell()
+        .store(storeMessage({
+            info: { type: 'external-in', src: null, dest: plan.address, importFee: 0n },
+            init: plan.stateInit,
+            body,
+        }))
+        .endCell();
+    // Belt-and-suspenders: the init actually serialized into the external MUST hash to the
+    // keeper address, or the account would stay uninit again (the exact failure we're fixing).
+    const parsed = loadMessage(ext.beginParse());
+    if (!parsed.init) {
+        throw new Error('Keeper external deploy: message has no init (would not initialize).');
+    }
+    const deliveredHash = beginCell().store(storeStateInit(parsed.init)).endCell().hash().toString('hex');
+    if (deliveredHash !== plan.address.hash.toString('hex')) {
+        throw new Error(
+            `Keeper external deploy: the external's delivered init hashes to ${deliveredHash.slice(0, 16)}… ` +
+            `but the keeper address is ${plan.address.hash.toString('hex').slice(0, 16)}… — refusing to send.`,
+        );
+    }
+    return ext;
 }

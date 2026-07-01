@@ -8,18 +8,22 @@
  * the libraries. `assertInitParity` is the pre-send gate; these tests prove it accepts a real
  * keeper and REJECTS a library-less / mismatched init (the exact class of the live incident).
  */
-import { beginCell, storeStateInit } from '@ton/core';
+import { beginCell, storeStateInit, loadMessage } from '@ton/core';
 import { Cell } from '@ton/core';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
+import { keyPairFromSecretKey } from '@ton/crypto';
 import {
     buildKeeperStateInit,
+    buildKeeperExternalDeploy,
     assertInitParity,
     storeKeeperStateInitCell,
+    KEEPER_WORKCHAIN,
     type KeeperPlan,
 } from '../../scripts/lib/libraryKeeper';
 
 const PUBKEY = Buffer.alloc(32, 7);
+const KEYPAIR = keyPairFromSecretKey(Buffer.alloc(64, 9));
 
 describe('Keeper StateInit parity (uninit guard)', () => {
     let code: Cell;
@@ -61,5 +65,24 @@ describe('Keeper StateInit parity (uninit guard)', () => {
         const other = buildKeeperStateInit([altCode], PUBKEY);
         const mismatched: KeeperPlan = { ...k, address: other.address };
         expect(() => assertInitParity(mismatched)).toThrow(/parity|inconsistency/i);
+    });
+
+    it('Branch D external self-deploy carries the exact libraried init to the wc-1 keeper', async () => {
+        const k = buildKeeperStateInit([code, altCode], KEYPAIR.publicKey);
+        const ext = await buildKeeperExternalDeploy(k, KEYPAIR);
+        const msg = loadMessage(ext.beginParse());
+        // external-in straight to the keeper address (no wc0 forwarding hop).
+        expect(msg.info.type).toBe('external-in');
+        if (msg.info.type === 'external-in') {
+            expect(msg.info.dest.equals(k.address)).toBe(true);
+            expect(msg.info.dest.workChain).toBe(KEEPER_WORKCHAIN);
+        }
+        // The delivered init carries all libraries and hashes to the keeper address.
+        expect(msg.init).toBeTruthy();
+        expect(msg.init!.libraries?.size).toBe(2);
+        const deliveredHash = beginCell().store(storeStateInit(msg.init!)).endCell().hash().toString('hex');
+        expect(deliveredHash).toBe(k.address.hash.toString('hex'));
+        // A signed wallet body is present (the seqno-0 deploy transfer).
+        expect(msg.body.bits.length).toBeGreaterThan(0);
     });
 });

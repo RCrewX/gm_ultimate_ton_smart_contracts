@@ -64,7 +64,7 @@ import {
     resolveLibrarySelectionWithCli,
     type LibrarySelection,
 } from './lib/library';
-import { buildKeeperStateInit, assertInitParity, KEEPER_FUNDING, KEEPER_WORKCHAIN } from './lib/libraryKeeper';
+import { buildKeeperStateInit, buildKeeperExternalDeploy, assertInitParity, KEEPER_FUNDING, KEEPER_WORKCHAIN } from './lib/libraryKeeper';
 import type { StateInit } from '@ton/core';
 import { detectChanges } from './lib/changeDetection';
 import {
@@ -420,6 +420,61 @@ async function waitForKeeperActive(
         await sleep(cadenceMs);
     }
     return { active: false, lastConcrete, balance };
+}
+
+/** Wait until an account's balance reaches `minBalance` (funding lands even while uninit). */
+async function waitForKeeperBalance(
+    client: TonClient,
+    address: Address,
+    withRateLimit: <T>(fn: () => Promise<T>) => Promise<T>,
+    minBalance: bigint,
+    windowMs: number = 120_000,
+    cadenceMs: number = 4_000,
+): Promise<boolean> {
+    const deadline = Date.now() + windowMs;
+    while (Date.now() < deadline) {
+        const st = await readAccountState(client, address, withRateLimit);
+        if (st.kind !== 'unknown' && (st.balance ?? 0n) >= minBalance) return true;
+        await sleep(cadenceMs);
+    }
+    return false;
+}
+
+/**
+ * Send a pre-built raw external message BoC (e.g. the keeper external self-deploy) with the
+ * same provider-failover + 429/5xx retry as `sendTransaction`. Used for the wallet-style
+ * external deploy that carries the exact StateInit straight to the destination.
+ */
+async function sendExternalRaw(
+    client: TonClient,
+    boc: Buffer,
+    withRateLimit: <T>(fn: () => Promise<T>) => Promise<T>,
+    maxRetries: number = 6,
+): Promise<void> {
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        const sendClient = await clientForCurrentProvider(client);
+        try {
+            await withRateLimit(() => sendClient.sendFile(boc));
+            return;
+        } catch (error: any) {
+            lastError = error;
+            const rpcBody = error?.response?.data;
+            const rpcDetail = rpcBody
+                ? ` | RPC: ${typeof rpcBody === 'string' ? rpcBody : JSON.stringify(rpcBody)}`
+                : '';
+            const errorMsg = (error.message || String(error)) + rpcDetail;
+            const isRetryable = /(500|502|503|429|timeout|ECONNRESET|ETIMEDOUT)/.test(errorMsg);
+            if (isRetryable && attempt < maxRetries) {
+                console.warn(`External send attempt ${attempt} failed: ${errorMsg}`);
+                console.warn(`Rotating to next provider, retrying... (attempt ${attempt + 1}/${maxRetries})`);
+                await sleep(Math.min(RETRY_DELAY, 3000));
+                continue;
+            }
+            throw error;
+        }
+    }
+    throw lastError || new Error('External send failed after retries');
 }
 
 async function getSeqno(
@@ -941,28 +996,52 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
             if (already.kind === 'active') {
                 console.log('Library keeper already active (libraries already published).');
             } else {
-                if (already.kind === 'uninit' && (already.balance ?? 0n) > 0n) {
-                    // Recovery path: a prior attempt funded the address but it stayed uninit.
-                    // The corrected, parity-checked init targets the SAME address and will
-                    // initialize the existing funded account.
-                    console.log(`Keeper is uninit with ${(Number(already.balance) / 1e9).toFixed(4)} TON already on it — the parity-checked init will initialize it (funds absorbed).`);
+                const bal = already.balance ?? 0n;
+                if (already.kind === 'uninit' && bal > 0n) {
+                    // Recovery: a prior attempt funded the address but it stayed uninit
+                    // (cskip_bad_state). The external self-deploy below initializes it IN PLACE
+                    // at the SAME address, absorbing the stranded balance.
+                    console.log(`Keeper is uninit with ${(Number(bal) / 1e9).toFixed(4)} TON already on it — recovering it in place (external self-deploy).`);
                 }
+                // Branch D — deploy the keeper the STANDARD wallet way: fund it (plain value,
+                // NO init), then send an EXTERNAL self-deploy straight to the wc-1 keeper. This
+                // removes the wc0->wc-1 internal forwarding hop that left the delivered init not
+                // matching the address (cskip_bad_state). An external carries no value, so the
+                // keeper must already hold gas — hence the fund step first.
+                if (bal < KEEPER_FUNDING) {
+                    const topUp = KEEPER_FUNDING - bal;
+                    console.log(`Funding keeper with ${(Number(topUp) / 1e9).toFixed(4)} TON (plain value, no init)...`);
+                    await withTimeout(
+                        sendTransaction(client, wallet, keyPair, keeper.address, topUp, withRateLimit, undefined, undefined),
+                        DEPLOYMENT_TIMEOUT,
+                        'Funding library keeper',
+                    );
+                    if (!(await waitForKeeperBalance(client, keeper.address, withRateLimit, KEEPER_FUNDING))) {
+                        throw new Error(
+                            `Keeper funding not confirmed at ${keeper.address.toString()} (RPC 429/timeout). ` +
+                            `Set TONCENTER_API_KEY / pin --rpc-endpoint and re-run (idempotent, same address).`,
+                        );
+                    }
+                }
+                console.log('Sending EXTERNAL self-deploy (init + signed body) straight to the keeper (no wc0 forwarding)...');
+                const ext = await buildKeeperExternalDeploy(keeper, keyPair);
                 await withTimeout(
-                    sendTransaction(client, wallet, keyPair, keeper.address, KEEPER_FUNDING, withRateLimit, undefined, keeper.stateInit),
+                    sendExternalRaw(client, ext.toBoc(), withRateLimit),
                     DEPLOYMENT_TIMEOUT,
-                    'Deploying library keeper',
+                    'External self-deploy of library keeper',
                 );
                 // RPC-resilient confirm: 429/timeout does NOT count as "not deployed".
                 const res = await waitForKeeperActive(client, keeper.address, withRateLimit);
                 if (!res.active) {
                     if (res.lastConcrete === 'uninit' || res.lastConcrete === 'frozen') {
                         throw new Error(
-                            `Library keeper at ${keeper.address.toString()} received the deploy but stayed ` +
-                            `${res.lastConcrete.toUpperCase()} (balance ${((Number(res.balance ?? 0n)) / 1e9).toFixed(4)} TON). ` +
-                            `The init parity check passed locally, so the delivered init matched the address — ` +
-                            `this means the masterchain rejected the StateInit-published libraries (real ` +
-                            `stop condition: capture the compute/skip reason). Funds are safe at this address; ` +
-                            `do NOT deploy library children.`,
+                            `Library keeper at ${keeper.address.toString()} stayed ${res.lastConcrete.toUpperCase()} ` +
+                            `after the EXTERNAL self-deploy (balance ${((Number(res.balance ?? 0n)) / 1e9).toFixed(4)} TON). ` +
+                            `The delivered init was byte-identical to the address (external, no forwarding), so a ` +
+                            `hash mismatch is ruled out — this is now a genuine platform limitation on ` +
+                            `StateInit-published public libraries. Capture the compute/skip reason:\n` +
+                            `  ts-node scripts/diagnoseKeeper.ts --keeper ${keeper.address.toString()} ${isTestnet ? '--testnet' : '--mainnet'}\n` +
+                            `and escalate (LibraryDeployer reference). Funds are safe; do NOT deploy library children.`,
                         );
                     }
                     throw new Error(
@@ -972,7 +1051,7 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
                         `DEPLOY_RPC_ENDPOINT to a keyed endpoint) and re-run; it will re-target the SAME address.`,
                     );
                 }
-                console.log('✓ Library keeper deployed + active — global library published.');
+                console.log('✓ Library keeper deployed + active (external self-deploy) — global library published.');
             }
             await sleep(TRANSACTION_WAIT_TIME);
 
