@@ -26,8 +26,12 @@ import { compileAllContracts } from '../../scripts/lib/abiCore';
 const OFF: LibrarySelection = { enabled: false, codes: [] };
 const ON_DEFAULT: LibrarySelection = { enabled: true, codes: ['jettonWallet', 'ship', 'coordinateCell'] };
 
+// Compare against a FROZEN, committed snapshot — NOT the mutable, gitignored
+// deployment_info/deployment_latest.json (a `--library` run pollutes that file with
+// isLibrary/fullCode entries and would falsely break this golden). Regenerate the
+// fixture only when a .tolk change intentionally moves code hashes.
 const deploymentJson = JSON.parse(
-    readFileSync(join(__dirname, '../../deployment_info/deployment_latest.json'), 'utf-8'),
+    readFileSync(join(__dirname, 'fixtures/legacyDeployment.json'), 'utf-8'),
 );
 const owner = Address.parse(deploymentJson.testnet.ownerAddress.bounceable);
 
@@ -42,7 +46,7 @@ describe('Library-cell deploy mode — Phase 1 flag + selective wrapping', () =>
         }
     }, 120000);
 
-    it('mode OFF reproduces the committed deployment_latest.json codes + owner-derived addresses', async () => {
+    it('mode OFF reproduces the frozen legacy snapshot codes + owner-derived addresses', async () => {
         const data = await buildOfflineDeploymentData(owner, 0n, 0n, undefined, OFF);
 
         // contractCodes are deterministic + owner-independent: every entry must match.
