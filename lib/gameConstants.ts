@@ -203,7 +203,15 @@ import { PassportOp } from '../wrappers/printers/universal_passport/UniversalBlo
 // which the TVM executor rejected) was replaced by `librarians: LibrarianInfo[]` — one
 // `Librarian` account per published code that publishes via runtime SETLIBCODE. ABI key
 // DeploymentData.libraryKeeper → .librarians; still absent on a legacy (default) deploy.
-export const CONSTANTS_SCHEMA_VERSION = 11;
+// v12 (2026-07-01): `libraryMode` + `librarians` MOVED from the top level of DeploymentData
+// INTO each NetworkDeploymentData (`testnet`/`mainnet`), so the masterchain publisher
+// addresses are network-scoped (a testnet vs a future mainnet library deploy are independent),
+// durable across a later non-library redeploy of the same net (carried forward instead of
+// dropped), and sit on the same `deployment[net]` seam the uap rent/top-up monitor reads.
+// LibrarianInfo gains `admin` (the librarian's admin = the network owner, as a bounceable
+// string) for top-up convenience. Offline `pnpm abi --library` now populates the per-network
+// `librarians` too (addresses are deterministic). Still absent on a legacy (default) deploy.
+export const CONSTANTS_SCHEMA_VERSION = 12;
 
 // ============================================================================
 // Serialisation helpers

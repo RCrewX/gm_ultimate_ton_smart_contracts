@@ -45,8 +45,8 @@ describe('ABI guard (deployment_latest.json vs on-chain)', () => {
         abi = loadAbi();
     }, 120000);
 
-    it('schema version is current (v11)', () => {
-        expect(abi.constants.schemaVersion).toBe(11);
+    it('schema version is current (v12)', () => {
+        expect(abi.constants.schemaVersion).toBe(12);
         // `deployed` is deploy-STATE, not ABI schema: it is legitimately `true` after a
         // real testnet deploy and `false` on an offline `pnpm abi` publish. deployment_info/
         // is gitignored (a local artifact), so this guard — which is about ABI/on-chain drift —

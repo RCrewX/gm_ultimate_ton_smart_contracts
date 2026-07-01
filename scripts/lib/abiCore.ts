@@ -30,11 +30,13 @@ import {
     DeploymentData,
     ContractCodes,
     ContractCodeInfo,
+    LibrarianInfo,
     formatAddress,
     getContractCodeData,
 } from '../../lib/buildOutput';
 import { buildGameConstants } from '../../lib/gameConstants';
 import { applyLibraryMode, resolveLibrarySelection, LibrarySelection, type AppliedLibraryMode } from './library';
+import { buildLibrarianPlan } from './librarian';
 
 // ============================================================================
 // Compile — every contract in ONE place (incl. the code-only ones: ssmSlot,
@@ -368,6 +370,24 @@ export async function buildOfflineDeploymentData(
     // actual masterchain publish (keeper) happens only on a LIVE deploy, not here.
     const { effective, wrapped } = applyLibraryMode(compiled, librarySelection);
     const contractCodes = buildLibraryAwareContractCodes(compiled, effective, wrapped);
+
+    // Library publishers are DETERMINISTIC ({librarianCode, admin=owner, real code}), so the
+    // offline builder can populate the per-network `librarians` WITHOUT a live deploy/keys —
+    // keeping the json complete + monitorable offline (`pnpm abi --library`). The full (real)
+    // code is `compiled[w.field]` (never the library cell). Only the address FORMATTING is
+    // network-specific (testOnly); the underlying wc-1 account is identical across nets.
+    const buildLibrarians = (isTestnet: boolean): LibrarianInfo[] | undefined => {
+        if (!librarySelection.enabled) return undefined;
+        return wrapped.map((w) => {
+            const plan = buildLibrarianPlan(compiled[w.field] as Cell, ownerAddress, compiled.librarianCode);
+            return {
+                name: w.name,
+                address: formatAddress(plan.address, isTestnet),
+                codeHash: plan.codeHash,
+                admin: ownerAddress.toString({ bounceable: true, urlSafe: true, testOnly: isTestnet }),
+            };
+        });
+    };
     const testnet = calculateNetworkAddresses(
         ownerAddress, effective.gameManagerCode, effective.retranslatorCode, effective.gameCode,
         effective.shipCode, effective.coordinateCellCode, effective.ssmCode, effective.ssmSlotCode,
@@ -386,12 +406,21 @@ export async function buildOfflineDeploymentData(
     );
     return {
         timestamp: new Date().toISOString(),
-        // Only set when on — keeps the default (legacy) json byte-for-byte. The `librarians`
-        // list is a live-deploy artifact (one Librarian per code); offline has no deployer key.
-        libraryMode: librarySelection.enabled ? true : undefined,
         constants: buildConstants(),
         contractCodes,
-        testnet: { ...testnet, status: undefined },
-        mainnet: { ...mainnet, status: undefined },
+        // Per-network (schema v12): `libraryMode`/`librarians` live in each network block. Only
+        // set when library mode is on — keeps the default (legacy) json byte-for-byte otherwise.
+        testnet: {
+            ...testnet,
+            status: undefined,
+            libraryMode: librarySelection.enabled ? true : undefined,
+            librarians: buildLibrarians(true),
+        },
+        mainnet: {
+            ...mainnet,
+            status: undefined,
+            libraryMode: librarySelection.enabled ? true : undefined,
+            librarians: buildLibrarians(false),
+        },
     };
 }

@@ -105,6 +105,19 @@ export interface NetworkDeploymentData {
         /** Independent module — registration-only R* slot (never reward-authorized). */
         ubps?: UbpsAddresses;
     };
+    /**
+     * True when THIS network librarized one or more child codes (opt-in). Per-network so a
+     * testnet library deploy and a future mainnet one are independent. Absent on a legacy
+     * (default) deploy; carried forward across a later non-library redeploy of the same net.
+     */
+    libraryMode?: boolean;
+    /**
+     * Masterchain library publishers for THIS network — one `Librarian` per published code
+     * (live library-mode deploy). Lives beside the other addresses so the uap rent/top-up
+     * monitor reads them off the same `deployment[net]` seam. Deterministic per
+     * {librarianCode, admin, code}; also computable offline (`pnpm abi --library`).
+     */
+    librarians?: LibrarianInfo[];
     status?: 'in_progress' | 'completed' | 'failed';
     error?: string;
 }
@@ -153,6 +166,12 @@ export interface LibrarianInfo {
     name: string;
     address: AddressInfo;
     codeHash: string;
+    /**
+     * The librarian's admin (= the deploying network's owner) as a bounceable address string.
+     * This account may withdraw the surplus above the rent floor, re-publish after a rent
+     * lapse, or remove the library — the top-up target the uap monitor alerts on.
+     */
+    admin?: string;
 }
 
 /**
@@ -160,10 +179,12 @@ export interface LibrarianInfo {
  */
 export interface DeploymentData {
     timestamp: string;
-    /** True when this deploy librarized one or more child codes (opt-in). */
-    libraryMode?: boolean;
-    /** Masterchain library publishers — one Librarian per published code (live library-mode deploy). */
-    librarians?: LibrarianInfo[];
+    /**
+     * NOTE (schema v12): `libraryMode` + `librarians` moved OUT of this top level and INTO
+     * each `NetworkDeploymentData` (`testnet`/`mainnet`), so the masterchain publisher
+     * addresses are network-scoped, durable across a later non-library redeploy, and sit on
+     * the same `deployment[net]` seam the uap monitor reads. Do not re-add them here.
+     */
     /**
      * Non-secret source-of-truth constants (opcodes, error codes, gas costs,
      * amounts, enums, storage layout) for sibling projects to stay in sync.
