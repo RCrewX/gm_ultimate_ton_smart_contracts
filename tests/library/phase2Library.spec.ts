@@ -9,7 +9,7 @@
  * Pure pieces run fast; the two compile-backed tests share one compile via beforeAll.
  */
 import { Blockchain, SandboxContract, TreasuryContract } from '@ton/sandbox';
-import { beginCell, Cell, Dictionary, toNano } from '@ton/core';
+import { Address, Cell, toNano } from '@ton/core';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
 import {
@@ -22,17 +22,19 @@ import {
     applyLibraryMode,
     resolveLibrarySelectionWithCli,
     toLibraryCell,
+    buildSandboxLibs,
 } from '../../scripts/lib/library';
 import {
-    buildKeeperStateInit,
+    buildLibrarianPlan,
     buildLibrariesDict,
     libraryKey,
-    KEEPER_WORKCHAIN,
-} from '../../scripts/lib/libraryKeeper';
+    LIBRARIAN_WORKCHAIN,
+} from '../../scripts/lib/librarian';
 import { JettonMinter, jettonContentToCell } from '../../wrappers/tep/jetton/JettonMinter';
 import { JettonWallet } from '../../wrappers/tep/jetton/JettonWallet';
 
-const DEPLOYER_PUBKEY = Buffer.alloc(32, 7); // deterministic fake key for address math
+// Deterministic fake admin for address math (the librarian's admin = deployer/owner).
+const ADMIN = new Address(0, Buffer.alloc(32, 3));
 
 describe('Phase 2 — CLI precedence (CLI > env > off)', () => {
     it('--no-library forces off, overriding DEPLOY_LIBRARY_MODE env', () => {
@@ -63,16 +65,18 @@ describe('Phase 2 — CLI precedence (CLI > env > off)', () => {
     });
 });
 
-describe('Phase 2 — masterchain library keeper', () => {
+describe('Phase 2 — masterchain Librarian (SETLIBCODE publisher)', () => {
     let walletCode: Cell;
     let minterCode: Cell;
+    let librarianCode: Cell;
 
     beforeAll(async () => {
         walletCode = await compile('JettonWallet');
         minterCode = await compile('JettonMinter');
+        librarianCode = await compile('Librarian');
     }, 120000);
 
-    it('buildLibrariesDict keys each code by its representation hash, public=true', () => {
+    it('buildLibrariesDict keys each code by its representation hash, public=true (sandbox seed)', () => {
         const dict = buildLibrariesDict([walletCode]);
         const key = libraryKey(walletCode);
         expect(dict.has(key)).toBe(true);
@@ -81,31 +85,26 @@ describe('Phase 2 — masterchain library keeper', () => {
         expect(entry.root.equals(walletCode)).toBe(true);
     });
 
-    it('buildKeeperStateInit produces a deterministic -1 (masterchain) account carrying the libraries', () => {
-        const a = buildKeeperStateInit([walletCode], DEPLOYER_PUBKEY);
-        const b = buildKeeperStateInit([walletCode], DEPLOYER_PUBKEY);
-        expect(a.address.workChain).toBe(KEEPER_WORKCHAIN);
+    it('buildLibrarianPlan produces a deterministic wc -1 account publishing one code', () => {
+        const a = buildLibrarianPlan(walletCode, ADMIN, librarianCode);
+        const b = buildLibrarianPlan(walletCode, ADMIN, librarianCode);
+        expect(a.address.workChain).toBe(LIBRARIAN_WORKCHAIN);
         expect(a.address.equals(b.address)).toBe(true); // deterministic
-        expect(a.stateInit.libraries?.has(libraryKey(walletCode))).toBe(true);
-        expect(a.entries).toEqual([{ codeHash: walletCode.hash().toString('hex') }]);
+        expect(a.codeHash).toBe(walletCode.hash().toString('hex'));
+        expect(a.publishedCode.equals(walletCode)).toBe(true);
     });
 
-    it('including libraries changes the keeper address vs a bare wallet stateInit', () => {
-        const withLibs = buildKeeperStateInit([walletCode], DEPLOYER_PUBKEY);
-        const noLibs = buildKeeperStateInit([], DEPLOYER_PUBKEY);
-        expect(withLibs.address.equals(noLibs.address)).toBe(false);
+    it('a different published code yields a different librarian address', () => {
+        const forWallet = buildLibrarianPlan(walletCode, ADMIN, librarianCode);
+        const forMinter = buildLibrarianPlan(minterCode, ADMIN, librarianCode);
+        expect(forWallet.address.equals(forMinter.address)).toBe(false);
     });
 
-    it("the keeper's published library resolves a child in a sandbox", async () => {
+    it("a published library resolves a child in a sandbox (seeded libs)", async () => {
         const blockchain = await Blockchain.create();
-        // Reconstruct the sandbox library context from the keeper's libraries dict —
-        // proving the published roots are exactly what a library child resolves against.
-        const keeper = buildKeeperStateInit([walletCode], DEPLOYER_PUBKEY);
-        const libs = Dictionary.empty(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell());
-        for (const k of keeper.libraries.keys()) {
-            libs.set(k, keeper.libraries.get(k)!.root);
-        }
-        blockchain.libs = beginCell().storeDictDirect(libs).endCell();
+        // The sandbox has no global-library context; seed the published root so a library
+        // child can resolve it. The true global (wc -1) publish is proven only on a live run.
+        blockchain.libs = buildSandboxLibs([walletCode]);
 
         const admin: SandboxContract<TreasuryContract> = await blockchain.treasury('admin');
         const holder: SandboxContract<TreasuryContract> = await blockchain.treasury('holder');
