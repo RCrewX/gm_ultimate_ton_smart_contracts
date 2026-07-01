@@ -21,8 +21,8 @@
  *   - `applyLibraryMode`     — return a CompiledContracts clone with selected codes wrapped.
  *
  * Companions (Phase 2 — live testnet):
- *   - `libraryKeeper.ts` — masterchain keeper that publishes the real codes to the
- *     global library (StateInit `libraries`).
+ *   - `librarian.ts` — builds one masterchain `Librarian` per code, which publishes the
+ *     real code to the global library at runtime via SETLIBCODE (mode 2).
  *   - `abiCore.buildLibraryAwareContractCodes` — deployment_latest.json publishes the
  *     library cell as each librarized code's entry (+ isLibrary + fullCode).
  *   - `deploySystem.hardRedeploy` — the live `--mode hard --library` wiring.

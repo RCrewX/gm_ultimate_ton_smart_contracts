@@ -141,14 +141,18 @@ export interface ContractCodes {
 }
 
 /**
- * Library-cell deploy mode metadata. Present only on a library-mode deploy.
- * `address` is the masterchain (-1) keeper account that publishes the real codes
- * to the global library; `libraries` lists each published code's name + the
- * library-cell hash (what addresses are derived from) and the full-code hash.
+ * Library-cell deploy mode metadata — one entry PER published code. Present only on a
+ * live library-mode deploy. Each `Librarian` is a masterchain (-1) account that publishes
+ * ONE real code to the global library via SETLIBCODE; `address` is that account, `name` is
+ * the friendly selector (e.g. `jettonWallet`), and `codeHash` is the published code's
+ * representation hash (the key any library child resolves against). The library-cell hash
+ * that addresses are derived from lives in the corresponding `contractCodes` entry
+ * (`isLibrary:true`, with `fullCode` = the real code).
  */
-export interface LibraryKeeperInfo {
+export interface LibrarianInfo {
+    name: string;
     address: AddressInfo;
-    libraries: Array<{ name: string; libraryHash: string; codeHash: string }>;
+    codeHash: string;
 }
 
 /**
@@ -158,8 +162,8 @@ export interface DeploymentData {
     timestamp: string;
     /** True when this deploy librarized one or more child codes (opt-in). */
     libraryMode?: boolean;
-    /** Masterchain library keeper (present on a live library-mode deploy). */
-    libraryKeeper?: LibraryKeeperInfo;
+    /** Masterchain library publishers — one Librarian per published code (live library-mode deploy). */
+    librarians?: LibrarianInfo[];
     /**
      * Non-secret source-of-truth constants (opcodes, error codes, gas costs,
      * amounts, enums, storage layout) for sibling projects to stay in sync.

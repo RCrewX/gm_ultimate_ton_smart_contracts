@@ -199,7 +199,11 @@ import { PassportOp } from '../wrappers/printers/universal_passport/UniversalBlo
 // v10: added optional library-cell deploy-mode fields — ContractCodeInfo.isLibrary
 // + .fullCode, and top-level DeploymentData.libraryMode + .libraryKeeper. Backward
 // compatible: these are absent on a legacy (default) deploy.
-export const CONSTANTS_SCHEMA_VERSION = 10;
+// v11 (2026-07-01): the single masterchain `libraryKeeper` (WalletV4 + StateInit.libraries,
+// which the TVM executor rejected) was replaced by `librarians: LibrarianInfo[]` — one
+// `Librarian` account per published code that publishes via runtime SETLIBCODE. ABI key
+// DeploymentData.libraryKeeper → .librarians; still absent on a legacy (default) deploy.
+export const CONSTANTS_SCHEMA_VERSION = 11;
 
 // ============================================================================
 // Serialisation helpers
