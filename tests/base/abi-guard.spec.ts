@@ -7,7 +7,7 @@ import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
 import { Retranslator } from '../../wrappers/game_manager/Retranslator';
 import { AnvilErrors } from '../../wrappers/game_manager/RetranslatorTypes';
-import { Opcodes as SsmOpcodes } from '../../wrappers/soulless_slot_machine/types';
+import { Opcodes as SsmOpcodes, MIN_ROLL_VALUE } from '../../wrappers/soulless_slot_machine/types';
 import { mergeContractCodes, ContractCodes, ContractCodeInfo } from '../../lib/buildOutput';
 import { Opcodes as GameOpcodes } from '../../wrappers/ton_race_game/types';
 
@@ -94,6 +94,32 @@ describe('ABI guard (deployment_latest.json vs on-chain)', () => {
     it('published SSM burn opcode matches the wrapper', () => {
         const published = abi.constants.opcodes.soullessSlotMachine.OP_SSM_BURN_STAKE;
         expect(published).toBe('0x' + (SsmOpcodes.OP_SSM_BURN_STAKE >>> 0).toString(16).padStart(8, '0'));
+    });
+
+    // --- SSMChecker custom-intake verification (gm-fix-1b) --------------------
+    it('published SSM checker/verify opcodes match the wrapper', () => {
+        const ops = abi.constants.opcodes.soullessSlotMachine;
+        expect(ops.OP_START_VERIFY).toBe(hex8(SsmOpcodes.OP_START_VERIFY));
+        expect(ops.OP_VERIFIED_ROLL).toBe(hex8(SsmOpcodes.OP_VERIFIED_ROLL));
+        expect(ops.OP_REFUND_ESCROW).toBe(hex8(SsmOpcodes.OP_REFUND_ESCROW));
+        expect(ops.OP_RECLAIM).toBe(hex8(SsmOpcodes.OP_RECLAIM));
+        // The checker speaks TEP-89 to the claimed master (byte-identical opcodes).
+        expect(ops.OP_REQUEST_WALLET_ADDRESS).toBe(hex8(SsmOpcodes.OP_REQUEST_WALLET_ADDRESS));
+        expect(ops.OP_RESPONSE_WALLET_ADDRESS).toBe(hex8(SsmOpcodes.OP_RESPONSE_WALLET_ADDRESS));
+        // The retired dict-era reclaim opcode is gone.
+        expect(ops.OP_RECLAIM_EXPIRED_ESCROW).toBeUndefined();
+    });
+
+    it('published SSM_MIN_ROLL_VALUE matches the bumped constant (1.3 TON, gm-fix-1b)', () => {
+        expect(abi.constants.amounts.SSM_MIN_ROLL_VALUE).toBe(MIN_ROLL_VALUE.toString());
+    });
+
+    it('published contractCodes carries the new ssmChecker code-only entry', () => {
+        const codes = abi.contractCodes.games.soulless_slot_machine;
+        expect(codes.ssmChecker).toBeDefined();
+        expect(typeof codes.ssmChecker.hash).toBe('string');
+        // The slot code-only entry is still there (not clobbered by the addition).
+        expect(codes.ssmSlot).toBeDefined();
     });
 
     // --- Native ship session (W5 ShipSession retired in v5) ------------------

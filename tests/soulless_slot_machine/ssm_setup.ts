@@ -21,6 +21,7 @@ export type SsmLight = {
     ssm: SandboxContract<SoullessSlotMachine>;
     ssmCode: Cell;
     slotCode: Cell;
+    checkerCode: Cell;
 };
 
 export async function setupSsmLight(): Promise<SsmLight> {
@@ -31,16 +32,17 @@ export async function setupSsmLight(): Promise<SsmLight> {
 
     const ssmCode = await compile('SoullessSlotMachine');
     const slotCode = await compile('SSMSlot');
+    const checkerCode = await compile('SSMChecker');
 
     const ssm = blockchain.openContract(
         SoullessSlotMachine.createFromConfig(
-            { ownerAddress: gm.address, ssmSlotCode: slotCode, rudaMasterAddress: rudaMaster.address },
+            { ownerAddress: gm.address, ssmSlotCode: slotCode, rudaMasterAddress: rudaMaster.address, ssmCheckerCode: checkerCode },
             ssmCode,
         ),
     );
     await ssm.sendDeploy(gm.getSender(), toNano('0.5'));
 
-    return { blockchain, gm, player, rudaMaster, ssm, ssmCode, slotCode };
+    return { blockchain, gm, player, rudaMaster, ssm, ssmCode, slotCode, checkerCode };
 }
 
 // Set a deterministic TVM random seed for the next message run.

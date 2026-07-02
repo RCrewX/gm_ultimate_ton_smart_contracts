@@ -9,6 +9,9 @@
 // =============================================================================
 
 import "ssm_common"
+// The SSMChecker child owns the custom-intake verification. SSM reuses its message
+// bodies (StartVerify out; VerifiedRoll/RefundEscrow in) and address calc from here.
+import "ssm_checker_static"
 
 // -----------------------------------------------------------------------------
 // Allowed stake amounts.
@@ -28,9 +31,21 @@ const CUSTOM_ALLOWED_AMOUNT: coins = 1000000 as coins; // exact raw, per brief
 // Minimum TON that must arrive WITH a roll intake (covers 3 ephemeral
 // deploys/hops + the native-stake burn R1 + the reward send + cashback). The
 // depositor attaches this as the jetton-transfer forward TON; it survives the
-// GM/R*/slot hops via carry-all. FLAGGED (uap consumer): raised from 0.7 -> 1.0
-// to fund the extra burn-and-mint hop on the native path.
-const MIN_ROLL_VALUE: coins = ton("1.0");
+// GM/R*/slot hops via carry-all. FLAGGED (uap consumer): raised 0.7 -> 1.0 to fund
+// the extra native burn-and-mint hop, then 1.0 -> 1.3 (gm-fix-1b) because the CUSTOM
+// path now also funds an ephemeral SSMChecker deploy + a TEP-89 round-trip
+// (SSM->checker->master->checker->SSM) BEFORE the roll chain. Sized empirically so a
+// happy custom roll survives that longer path with margin; the native path only
+// needs a fraction of it. The uap consumer must attach >= this forward-TON.
+const MIN_ROLL_VALUE: coins = ton("1.3");
+
+// Floor the value must still meet by the time a VERIFIED custom roll reaches SSM
+// (after the checker deploy + the two TEP-89 hops). A master that "vouches correctly
+// but eats the value" underfunds the roll — this makes it fail cleanly at intake of
+// the VerifiedRoll rather than stranding a half-funded roll chain. Sized well below
+// MIN_ROLL_VALUE (the two extra hops legitimately consume gas) but above what the
+// slot chain + reward budgets need to complete.
+const MIN_VERIFIED_ROLL_VALUE: coins = ton("0.8");
 
 // Reward-send budgets (exact value attached; cashback gets the carry-all rest).
 const NFT_REWARD_BUDGET: coins = ton("0.3");   // R1{MintNft} -> printer item deploy chain
@@ -56,10 +71,8 @@ const ERR_INSUFFICIENT_ROLL_VALUE = 945;  // not enough TON attached to roll
 const ERR_INVALID_SLOT_RESULT_SENDER = 946; // RollResult not from the last slot
 const ERR_BAD_FORWARD_PAYLOAD = 947;      // custom forwardPayload malformed
 const ERR_CUSTOM_ORIGIN_IS_NATIVE = 948;  // custom path claimed the RUDA master as origin (banned)
-const ERR_NO_PENDING_ROLL = 949;          // TEP-89 reply / reclaim references no pending escrow
-const ERR_VERIFY_SENDER_MISMATCH = 950;   // ResponseWalletAddress not from the queried master (or wrong owner)
-const ERR_ESCROW_NOT_EXPIRED = 951;       // reclaim attempted before the verify TTL elapsed
-const ERR_RECLAIM_NOT_AUTHORIZED = 952;   // reclaim not from the escrow's player or the owner
+const ERR_INVALID_CHECKER_SENDER = 949;   // VerifiedRoll/RefundEscrow not from the recomputed SSMChecker address
+const ERR_INSUFFICIENT_VERIFIED_VALUE = 950; // a verified custom roll arrived under-funded (value eaten en route)
 
 const GAS_COST_SET_CONFIG: coins = ton("0.01");
 
@@ -72,25 +85,14 @@ const CUSTOM_VERIFY_TTL: int = 3600;      // seconds (1 hour)
 //  Storage
 // =============================================================================
 
-// One escrowed-but-unverified custom roll, awaiting the claimed master's TEP-89 answer.
-// Keyed in `pendingRolls` by the escrow wallet W (== the notification sender): the master's
-// ResponseWalletAddress must return exactly that W for the roll to run (proves the notifier
-// IS the master's wallet for owner=SSM). No roll ever starts on an unproven escrow.
-struct PendingRoll {
-    player: address         // who receives rewards / the refund
-    stake: coins            // escrowed custom jetton amount
-    master: address         // claimed jetton master == NFT origin; also the queried TEP-89 responder
-    queryId: uint64
-    deadline: uint32        // blockchain.now() + CUSTOM_VERIFY_TTL; after this the escrow is reclaimable
-}
-
 struct SSMStorage {
     ownerAddress: address       // GameManager (sole on-chain authority / native reward pipe)
     ssmSlotCode: cell           // SSMSlot code — to deploy slot0 and to verify the last slot
     rudaMasterAddress: address  // RUDA jetton minter; the "native" NFT origin
-    // Escrowed custom rolls pending TEP-89 verification, keyed by escrow wallet W. Appended
-    // at the END of the layout (fresh field): empty on a freshly deployed SSM.
-    pendingRolls: map<address, PendingRoll>
+    // SSMChecker code — SSM deploys an ephemeral checker child per custom-intake verification
+    // and recomputes its address to authenticate the VerifiedRoll/RefundEscrow callbacks. This
+    // replaces the old `pendingRolls` dict: SSM now keeps NO per-verification state (O(1)).
+    ssmCheckerCode: cell
 }
 
 fun SSMStorage.load() {
@@ -234,32 +236,14 @@ struct CustomRollPayload {
     queryId: uint64
 }
 
-// TEP-89 discoverable-wallet exchange (opcodes byte-identical to tep/jetton/messages.tolk).
-// Phase 1: SSM asks the claimed master "what is your wallet for owner=SSM?".
-struct (0x2c76b973) RequestWalletAddress {
-    queryId: uint64
-    ownerAddress: address
-    includeOwnerAddress: bool
-}
+// The custom-intake TEP-89 exchange (RequestWalletAddress/ResponseWalletAddress) and the
+// escrow-timeout reclaim now live entirely on the SSMChecker child (ssm_checker_static.tolk);
+// SSM only speaks StartVerify (out) and VerifiedRoll/RefundEscrow (in) to it.
 
-// Phase 2: the master answers. SSM matches jettonWalletAddress against the escrow wallet W
-// that notified it; only an exact match (from the queried master) starts the roll.
-struct (0xd1735400) ResponseWalletAddress {
-    queryId: uint64
-    jettonWalletAddress: address?
-    ownerAddress: Cell<address>?
-}
-
-// Owner- or player-callable reclaim of an expired pending escrow (a master that never
-// answered TEP-89). Refunds the escrow to the recorded player and drops the record.
-struct (0x5535e702) ReclaimExpiredEscrow {
-    queryId: uint64
-    wallet: address          // the escrow wallet W keying the pending record to reclaim
-}
-
-// Owner (GM) may re-point the slot code / RUDA master (e.g. after a slot redeploy).
+// Owner (GM) may re-point the slot code / checker code / RUDA master (e.g. after a redeploy).
 struct (0x5535e701) SetSsmConfig {
     ssmSlotCode: cell
+    ssmCheckerCode: cell
     rudaMasterAddress: address
 }
 
@@ -319,13 +303,14 @@ fun calcDeployedSSM(
     ownerAddress: address,
     ssmSlotCode: cell,
     rudaMasterAddress: address,
+    ssmCheckerCode: cell,
     ssmCode: cell,
 ): AutoDeployAddress {
     val initStorage: SSMStorage = {
         ownerAddress,
         ssmSlotCode,
         rudaMasterAddress,
-        pendingRolls: createEmptyMap(),
+        ssmCheckerCode,
     };
     return {
         stateInit: {

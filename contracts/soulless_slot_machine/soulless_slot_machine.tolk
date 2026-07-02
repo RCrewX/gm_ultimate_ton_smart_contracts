@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 import "ssm_common"
+import "ssm_checker_static"
 import "static"
 
 // =============================================================================
@@ -22,8 +23,8 @@ import "static"
 type AllowedMessagesToSSM =
     | JettonUsed                       // native intake (from GM)
     | TransferNotificationForRecipient // custom intake phase 1: escrow notification from SSM's custom wallet
-    | ResponseWalletAddress            // custom intake phase 2: the claimed master's TEP-89 answer
-    | ReclaimExpiredEscrow             // custom timeout: refund an escrow whose master never answered
+    | VerifiedRoll                     // custom intake phase 2: the SSMChecker proved the origin -> roll
+    | RefundEscrow                     // custom intake failed (mismatch/collision/timeout) -> return escrow
     | RollResult                       // from the last slot
     | SetSsmConfig                     // owner (GM) config
     | ReturnExcessesBack
@@ -55,11 +56,13 @@ fun onInternalMessage(in: InMessage) {
 
         // ---- CUSTOM intake PHASE 1: escrow notification straight from a custom wallet ----
         // The escrow is real (tokens are now in the notifying wallet W == in.senderAddress),
-        // but the claimed `master` is UNPROVEN. We do NOT roll here. Instead we record a
-        // pending roll keyed by W and ask the claimed master (via TEP-89) for its wallet for
-        // owner=SSM. Only if the master answers with exactly W (Phase 2) do we roll with that
-        // master as the NFT origin — closing the "mint an NFT with an arbitrary origin without
-        // holding that master's tokens" vector (GM-B-001).
+        // but the claimed `master` is UNPROVEN. We do NOT roll here, and we write NOTHING to our
+        // own storage (SSM stays O(1)). Instead we deploy an ephemeral SSMChecker child keyed by
+        // (SSM, player, master) and hand it the escrow to verify via TEP-89. Only if the master
+        // vouches that W is its wallet for owner=SSM does the checker send us VerifiedRoll —
+        // closing the "mint an NFT with an arbitrary origin without holding that master's tokens"
+        // vector (GM-B-001). A busy checker (a live verification for the same key) refunds this
+        // second intake; a master that never answers is reclaimed after the TTL.
         TransferNotificationForRecipient => {
             assert (msg.jettonAmount == CUSTOM_ALLOWED_AMOUNT) throw ERR_INVALID_CUSTOM_AMOUNT;
             assert (in.valueCoins >= MIN_ROLL_VALUE) throw ERR_INSUFFICIENT_ROLL_VALUE;
@@ -73,96 +76,67 @@ fun onInternalMessage(in: InMessage) {
             assert (payload.master != storage.rudaMasterAddress) throw ERR_CUSTOM_ORIGIN_IS_NATIVE;
 
             val escrowWallet = in.senderAddress; // W: the wallet holding the escrow
-            val pending: PendingRoll = {
-                player: payload.player,
-                stake: msg.jettonAmount,
-                master: payload.master,
-                queryId: payload.queryId,
-                deadline: (blockchain.now() + CUSTOM_VERIFY_TTL) as uint32,
-            };
-            storage.pendingRolls.set(escrowWallet, pending);
-            storage.save();
-
-            // Reserve prior balance + tax; forward the rest to the claimed master as a TEP-89
-            // wallet-address request. Its response (Phase 2) carries the value back to fund the
-            // roll. NoBounce: a non-TEP-89 master simply never answers -> timeout reclaim.
+            // Reserve prior balance + tax; forward the rest into the checker deploy. The checker
+            // funds the TEP-89 round-trip and carries the value back inside VerifiedRoll/RefundEscrow.
             reserveValue(in.valueCoins);
-            val req = createMessage({
+            val startVerify = createMessage({
                 bounce: BounceMode.NoBounce,
-                dest: payload.master,
+                dest: calcDeployedChecker(contract.getAddress(), payload.player, payload.master, storage.ssmCheckerCode),
                 value: 0,
-                body: RequestWalletAddress {
+                body: StartVerify {
+                    escrowWallet: escrowWallet,
+                    stake: msg.jettonAmount,
                     queryId: payload.queryId,
-                    ownerAddress: contract.getAddress(),
-                    includeOwnerAddress: true,
+                    deadline: (blockchain.now() + CUSTOM_VERIFY_TTL) as uint32,
                 },
             });
-            req.send(SEND_MODE_CARRY_ALL_REMAINING_BALANCE);
+            startVerify.send(SEND_MODE_CARRY_ALL_REMAINING_BALANCE);
         }
 
-        // ---- CUSTOM intake PHASE 2: the claimed master answered TEP-89 ----
-        // Match the reply against a pending escrow. The record is keyed by the escrow wallet W,
-        // so a genuine master (queried in Phase 1) returns exactly that W. A forged notification
-        // (from a wallet the claimed master does NOT own) makes the master return a DIFFERENT
-        // wallet, which matches no pending record -> rejected (that forged escrow is reclaimed on
-        // timeout). We also require the responder to BE the queried master.
-        ResponseWalletAddress => {
-            assert (msg.jettonWalletAddress != null) throw ERR_NO_PENDING_ROLL;
-            val escrowWallet = msg.jettonWalletAddress!;
-            val found = storage.pendingRolls.get(escrowWallet);
-            assert (found.isFound) throw ERR_NO_PENDING_ROLL;
-            val pending = found.loadValue();
-
-            // Only the master we actually queried may vouch, and if it echoed the owner it must
-            // be us. (Do NOT delete/refund on mismatch: a forged reply must not cancel a genuine
-            // pending record — that record is settled by its own real reply or by timeout.)
-            assert (in.senderAddress == pending.master) throw ERR_VERIFY_SENDER_MISMATCH;
-            if (msg.ownerAddress != null) {
-                assert (msg.ownerAddress!.load() == contract.getAddress()) throw ERR_VERIFY_SENDER_MISMATCH;
-            }
-
-            // Verified: the notifier IS the master's wallet for owner=SSM. Drop the record and
-            // run the roll with the proven origin, escrow returnable to W.
-            storage.pendingRolls.delete(escrowWallet);
-            storage.save();
+        // ---- CUSTOM intake PHASE 2: the SSMChecker verified the origin -> roll ----
+        // Authenticate by RECOMPUTING the checker address from (player, master) — never trust the
+        // carried fields. Belt-and-braces: re-reject the native master as a custom origin. Then run
+        // the roll exactly as before, with the proven master as origin and escrow returnable to W.
+        VerifiedRoll => {
+            assert (in.senderAddress == calcAddressOfChecker(contract.getAddress(), msg.player, msg.master, storage.ssmCheckerCode))
+                throw ERR_INVALID_CHECKER_SENDER;
+            assert (msg.master != storage.rudaMasterAddress) throw ERR_CUSTOM_ORIGIN_IS_NATIVE;
+            // A "vouches-but-eats-the-value" master would underfund the roll: fail cleanly here
+            // rather than strand a half-funded slot chain.
+            assert (in.valueCoins >= MIN_VERIFIED_ROLL_VALUE) throw ERR_INSUFFICIENT_VERIFIED_VALUE;
 
             val ctx: RollContext = {
-                player: pending.player,
-                stake: pending.stake,
+                player: msg.player,
+                stake: msg.stake,
                 isNative: false,
-                origin: pending.master,
-                escrowWallet: escrowWallet,
-                queryId: pending.queryId,
+                origin: msg.master,
+                escrowWallet: msg.escrowWallet,
+                queryId: msg.queryId,
             };
             startRoll(storage, ctx, in.valueCoins);
         }
 
-        // ---- CUSTOM timeout: reclaim an escrow whose master never answered TEP-89 ----
-        // Callable by the escrow's player or the owner (GM). After the verify TTL, refund the
-        // escrow to the player and drop the record. Idempotent-safe: a missing record throws.
-        ReclaimExpiredEscrow => {
-            val found = storage.pendingRolls.get(msg.wallet);
-            assert (found.isFound) throw ERR_NO_PENDING_ROLL;
-            val pending = found.loadValue();
-            assert (in.senderAddress == storage.ownerAddress || in.senderAddress == pending.player) throw ERR_RECLAIM_NOT_AUTHORIZED;
-            assert (blockchain.now() > pending.deadline as int) throw ERR_ESCROW_NOT_EXPIRED;
-
-            storage.pendingRolls.delete(msg.wallet);
-            storage.save();
+        // ---- CUSTOM intake failed: the checker asked us to return the escrow ----
+        // Same address authentication. Return the staked custom jetton to the player via W. Inert-
+        // safe: if W was a forged non-wallet, the AskToTransfer is ignored (a wallet obeys only its
+        // owner, and SSM owns only its real wallets), so a forged escrow simply never moves.
+        RefundEscrow => {
+            assert (in.senderAddress == calcAddressOfChecker(contract.getAddress(), msg.player, msg.master, storage.ssmCheckerCode))
+                throw ERR_INVALID_CHECKER_SENDER;
 
             reserveValue(in.valueCoins);
             val refund: AskToTransfer = {
-                queryId: pending.queryId,
-                jettonAmount: pending.stake,
-                transferRecipient: pending.player,
-                sendExcessesTo: pending.player,
+                queryId: msg.queryId,
+                jettonAmount: msg.stake,
+                transferRecipient: msg.player,
+                sendExcessesTo: msg.player,
                 customPayload: null,
                 forwardTonAmount: 0,
                 forwardPayload: beginCell().toSlice(),
             };
             val m = createMessage({
                 bounce: BounceMode.NoBounce,
-                dest: msg.wallet, // the escrow wallet W
+                dest: msg.escrowWallet, // the escrow wallet W
                 value: ESCROW_RETURN_BUDGET,
                 body: refund,
             });
@@ -184,6 +158,7 @@ fun onInternalMessage(in: InMessage) {
             assert (in.senderAddress == storage.ownerAddress) throw ERR_INVALID_OWNER_SENDER;
             assert (in.valueCoins >= GAS_COST_SET_CONFIG) throw ERR_MESSAGE_VALUE_TOO_LOW;
             storage.ssmSlotCode = msg.ssmSlotCode;
+            storage.ssmCheckerCode = msg.ssmCheckerCode;
             storage.rudaMasterAddress = msg.rudaMasterAddress;
             storage.save();
             reserveValue(in.valueCoins);
@@ -348,17 +323,16 @@ get fun get_slot_address(reelIndex: int): address {
     return calcAddressOfSlot(contract.getAddress(), reelIndex, storage.ssmSlotCode);
 }
 
-// Pending custom-roll escrow keyed by wallet W: (isFound, player, stake, master, queryId,
-// deadline). For an absent key returns (false, W, 0, W, 0, 0). Lets tests observe the
-// two-phase verification state without driving the whole handshake.
-get fun get_pending_roll(wallet: address): (bool, address, coins, address, int, int) {
+get fun get_checker_code(): cell {
     val storage = lazy SSMStorage.load();
-    val found = storage.pendingRolls.get(wallet);
-    if (!found.isFound) {
-        return (false, wallet, 0, wallet, 0, 0);
-    }
-    val p = found.loadValue();
-    return (true, p.player, p.stake, p.master, p.queryId, p.deadline as int);
+    return storage.ssmCheckerCode;
+}
+
+// Deterministic address of the ephemeral SSMChecker for a (player, master) verification.
+// Lets tests/consumers find the child to observe its state or drive a timeout Reclaim.
+get fun get_checker_address(player: address, master: address): address {
+    val storage = lazy SSMStorage.load();
+    return calcAddressOfChecker(contract.getAddress(), player, master, storage.ssmCheckerCode);
 }
 
 // Pure reward mapping exposed for exhaustive unit testing of every table row.

@@ -11,8 +11,10 @@ import {
     OUT_RETURN_ESCROW,
     Opcodes,
     SsmErrors,
+    SsmCheckerErrors,
     CUSTOM_VERIFY_TTL,
 } from '../../wrappers/soulless_slot_machine/types';
+import { SSMChecker } from '../../wrappers/soulless_slot_machine/SSMChecker';
 import {
     setupSsmLight,
     setSeed,
@@ -24,23 +26,19 @@ import {
 } from './ssm_setup';
 
 // =============================================================================
-// Custom-jetton roll — TEP-89 TWO-PHASE, escrow-and-verify (GM-B-001).
+// Custom-jetton roll — verification via the ephemeral SSMChecker child (GM-B-001 /
+// gm-fix-1b). SSM writes NO per-verification state: it deploys a checker keyed by
+// (player, master), which does the TEP-89 handshake itself and hands SSM a
+// VerifiedRoll (roll) or RefundEscrow (return escrow), then self-destructs.
 //
-// Phase 1: an escrow wallet W notifies SSM (TransferNotificationForRecipient) with a
-//   claimed master. SSM records a pending roll keyed by W and emits RequestWalletAddress
-//   to the claimed master. NO roll runs yet; the claimed origin is UNPROVEN.
-// Phase 2: the master answers (ResponseWalletAddress). Only if it vouches for exactly W
-//   (and is the queried master) does SSM roll, with that master as the NFT origin.
-//
-// Here the "master" is a stand-in treasury we drive manually — it lets us prove the SSM
-// verification logic (happy path, forged notification, sender mismatch, timeout reclaim,
-// native-origin rejection). The full handshake against a REAL minter lives in the e2e spec.
+// Here the "master" is a stand-in treasury we drive manually (it answers the
+// checker's TEP-89 request). The full handshake against a REAL minter is the e2e spec.
 // =============================================================================
 
 const NOW = 1_900_000_000;
-const ROLL_VALUE = toNano('1.5');
+const ROLL_VALUE = toNano('1.5'); // > MIN_ROLL_VALUE (1.3)
 
-describe('SSM custom-jetton roll (TEP-89 two-phase)', () => {
+describe('SSM custom-jetton roll (SSMChecker child)', () => {
     let S: SsmLight;
     let escrowWallet: SandboxContract<TreasuryContract>; // stand-in for the escrow jetton wallet W
     let customMaster: SandboxContract<TreasuryContract>; // the claimed custom master == origin
@@ -59,46 +57,66 @@ describe('SSM custom-jetton roll (TEP-89 two-phase)', () => {
         return S.ssm.sendCustomTransferNotification(w.getSender(), value, amount, master, S.player.address, queryId);
     }
 
-    // Phase 2: `master` answers TEP-89, vouching that `walletAddr` is its wallet for owner=SSM.
-    function respond(master: SandboxContract<TreasuryContract>, walletAddr: Address, queryId: bigint, value = ROLL_VALUE) {
-        return S.ssm.sendResponseWalletAddress(master.getSender(), value, walletAddr, queryId, S.ssm.address);
+    async function openChecker(master: Address) {
+        const addr = await S.ssm.getCheckerAddress(S.player.address, master);
+        return S.blockchain.openContract(SSMChecker.createFromAddress(addr));
+    }
+
+    // Phase 2: `master` answers TEP-89 to the checker, vouching that `walletAddr` is its
+    // wallet for owner=SSM. A genuine reply returns the escrow wallet W → SSM rolls.
+    async function respond(master: SandboxContract<TreasuryContract>, walletAddr: Address, queryId: bigint, value = ROLL_VALUE) {
+        const checker = await openChecker(master.address);
+        return checker.sendResponseWalletAddress(master.getSender(), value, walletAddr, queryId, S.ssm.address);
+    }
+
+    async function checkerState(master: Address) {
+        const checker = await openChecker(master);
+        return checker.getCheckerState();
+    }
+
+    async function checkerGone(master: Address): Promise<boolean> {
+        const addr = await S.ssm.getCheckerAddress(S.player.address, master);
+        const c = await S.blockchain.getContract(addr);
+        return c.accountState === undefined || c.accountState.type !== 'active';
     }
 
     // ---- Phase 1 behaviour ---------------------------------------------------
 
-    it('phase 1 records a pending escrow and asks the claimed master for its wallet — it does NOT roll yet', async () => {
+    it('phase 1 deploys a checker that asks the claimed master for its wallet — SSM does NOT roll or store state', async () => {
         const r = await notify(customMaster.address, CUSTOM_ALLOWED_AMOUNT, ROLL_VALUE, 1n);
 
-        // SSM asked the claimed master via TEP-89…
+        const checkerAddr = await S.ssm.getCheckerAddress(S.player.address, customMaster.address);
+        // The checker (not SSM) asked the claimed master via TEP-89…
         expect(r.transactions).toHaveTransaction({
-            from: S.ssm.address,
+            from: checkerAddr,
             to: customMaster.address,
             op: Opcodes.OP_REQUEST_WALLET_ADDRESS,
             success: true,
         });
-        // …and NO roll ran (no RollResult came back to SSM).
+        // …and NO roll ran.
         expect(readRollSymbols(r, S.ssm.address)).toBeNull();
 
-        // The pending record is keyed by W with the claimed master + a TTL deadline.
-        const pending = await S.ssm.getPendingRoll(escrowWallet.address);
-        expect(pending).not.toBeNull();
-        expect(pending!.player).toEqualAddress(S.player.address);
-        expect(pending!.stake).toBe(CUSTOM_ALLOWED_AMOUNT);
-        expect(pending!.master).toEqualAddress(customMaster.address);
-        expect(pending!.deadline).toBe(NOW + CUSTOM_VERIFY_TTL);
+        // The pending verification lives on the checker, keyed by (player, master), with a TTL.
+        const st = await checkerState(customMaster.address);
+        expect(st.phase).toBe(1);
+        expect(st.player).toEqualAddress(S.player.address);
+        expect(st.master).toEqualAddress(customMaster.address);
+        expect(st.escrowWallet).toEqualAddress(escrowWallet.address);
+        expect(st.stake).toBe(CUSTOM_ALLOWED_AMOUNT);
+        expect(st.deadline).toBe(NOW + CUSTOM_VERIFY_TTL);
     });
 
-    it('rejects a custom stake that is not exactly 1_000_000 raw (no pending record)', async () => {
+    it('rejects a custom stake that is not exactly 1_000_000 raw (no checker deployed)', async () => {
         const r = await notify(customMaster.address, 999_999n, ROLL_VALUE, 1n);
         expect(r.transactions).toHaveTransaction({
             to: S.ssm.address,
             success: false,
             exitCode: SsmErrors.ERR_INVALID_CUSTOM_AMOUNT,
         });
-        expect(await S.ssm.getPendingRoll(escrowWallet.address)).toBeNull();
+        expect(await checkerGone(customMaster.address)).toBe(true);
     });
 
-    it('rejects a custom roll without enough attached TON', async () => {
+    it('rejects a custom roll without enough attached TON (below MIN_ROLL_VALUE)', async () => {
         const r = await notify(customMaster.address, CUSTOM_ALLOWED_AMOUNT, toNano('0.5'), 1n);
         expect(r.transactions).toHaveTransaction({
             to: S.ssm.address,
@@ -115,24 +133,22 @@ describe('SSM custom-jetton roll (TEP-89 two-phase)', () => {
             success: false,
             exitCode: SsmErrors.ERR_CUSTOM_ORIGIN_IS_NATIVE,
         });
-        // No request emitted, no escrow recorded.
-        expect(r.transactions).not.toHaveTransaction({ from: S.ssm.address, op: Opcodes.OP_REQUEST_WALLET_ADDRESS });
-        expect(await S.ssm.getPendingRoll(escrowWallet.address)).toBeNull();
+        // No verification started (no request, no checker).
+        expect(r.transactions).not.toHaveTransaction({ op: Opcodes.OP_REQUEST_WALLET_ADDRESS });
+        expect(await checkerGone(S.rudaMaster.address)).toBe(true);
     });
 
-    // ---- Phase 2 verification ------------------------------------------------
+    // ---- Verified roll (happy path) -----------------------------------------
 
-    it('happy path: the genuine master vouches for W → roll runs with the custom origin; every outcome routes correctly', async () => {
+    it('happy path: the genuine master vouches for W → roll runs with the custom origin; the checker self-destructs', async () => {
         const stake = CUSTOM_ALLOWED_AMOUNT;
         const seen = new Set<string>();
 
         for (let seed = 1; seed <= 20; seed++) {
             const q = BigInt(seed);
-            // Phase 1: escrow + verify request.
             await notify(customMaster.address, stake, ROLL_VALUE, q);
-            expect(await S.ssm.getPendingRoll(escrowWallet.address)).not.toBeNull();
+            expect((await checkerState(customMaster.address)).phase).toBe(1);
 
-            // Phase 2: master vouches for exactly W → SSM rolls. Seed drives the reels.
             setSeed(S.blockchain, seed);
             const r = await respond(customMaster, escrowWallet.address, q);
 
@@ -143,8 +159,8 @@ describe('SSM custom-jetton roll (TEP-89 two-phase)', () => {
             const escrow = findEscrowReturn(r, escrowWallet.address);
 
             expect(hasCashback(r, S.player.address)).toBe(true);
-            // The pending record was consumed by the verified roll.
-            expect(await S.ssm.getPendingRoll(escrowWallet.address)).toBeNull();
+            // The checker consumed itself on settle.
+            expect(await checkerGone(customMaster.address)).toBe(true);
 
             if (exp.kind === OUT_NOTHING) {
                 expect(req).toBeNull();
@@ -178,7 +194,9 @@ describe('SSM custom-jetton roll (TEP-89 two-phase)', () => {
         expect(seen.has('escrow') || seen.has('escrow+ruda')).toBe(true);
     });
 
-    it('forged notification: the master vouches for a DIFFERENT wallet than W → no roll, escrow stays pending', async () => {
+    // ---- Negative / failure paths -------------------------------------------
+
+    it('forged notification: the master vouches for a DIFFERENT wallet than W → no roll, escrow refunded to the player', async () => {
         // W notified SSM claiming customMaster, but customMaster's real wallet for SSM is W_good.
         const wGood = await S.blockchain.treasury('customMasterRealWallet');
         await notify(customMaster.address, CUSTOM_ALLOWED_AMOUNT, ROLL_VALUE, 1n);
@@ -186,79 +204,93 @@ describe('SSM custom-jetton roll (TEP-89 two-phase)', () => {
         setSeed(S.blockchain, 3);
         const r = await respond(customMaster, wGood.address, 1n); // vouches for W_good, not the notifier W
 
-        // The reply matches no pending record (pending is keyed by W, not W_good) → rejected.
+        // No roll; the checker returned the escrow to the player via W and self-destructed.
+        expect(readRollSymbols(r, S.ssm.address)).toBeNull();
+        const escrow = findEscrowReturn(r, escrowWallet.address);
+        expect(escrow).not.toBeNull();
+        expect(escrow!.amount).toBe(CUSTOM_ALLOWED_AMOUNT);
+        expect(escrow!.recipient).toEqualAddress(S.player.address);
+        expect(await checkerGone(customMaster.address)).toBe(true);
+    });
+
+    it('spoofed callback: a VerifiedRoll to SSM from a NON-checker address is rejected (ERR_INVALID_CHECKER_SENDER)', async () => {
+        const r = await S.ssm.sendVerifiedRoll(attacker.getSender(), ROLL_VALUE, {
+            player: S.player.address,
+            master: customMaster.address,
+            escrowWallet: escrowWallet.address,
+            stake: CUSTOM_ALLOWED_AMOUNT,
+            queryId: 1n,
+        });
         expect(r.transactions).toHaveTransaction({
             to: S.ssm.address,
             success: false,
-            exitCode: SsmErrors.ERR_NO_PENDING_ROLL,
+            exitCode: SsmErrors.ERR_INVALID_CHECKER_SENDER,
         });
-        // No roll, and the (forged) escrow at W is untouched — it is reclaimable on timeout.
         expect(readRollSymbols(r, S.ssm.address)).toBeNull();
-        expect(await S.ssm.getPendingRoll(escrowWallet.address)).not.toBeNull();
     });
 
-    it('a reply for W from someone other than the queried master is rejected (ERR_VERIFY_SENDER_MISMATCH); the record survives', async () => {
+    it('spoofed callback: a RefundEscrow to SSM from a NON-checker address is rejected (ERR_INVALID_CHECKER_SENDER)', async () => {
+        const r = await S.ssm.sendRefundEscrow(attacker.getSender(), ROLL_VALUE, {
+            player: S.player.address,
+            master: customMaster.address,
+            escrowWallet: escrowWallet.address,
+            stake: CUSTOM_ALLOWED_AMOUNT,
+            queryId: 1n,
+        });
+        expect(r.transactions).toHaveTransaction({
+            to: S.ssm.address,
+            success: false,
+            exitCode: SsmErrors.ERR_INVALID_CHECKER_SENDER,
+        });
+        expect(findEscrowReturn(r, escrowWallet.address)).toBeNull();
+    });
+
+    // ---- One-in-flight collision --------------------------------------------
+
+    it('collision: a second intake for a busy (player, master) is refunded; the first verification is undisturbed', async () => {
         await notify(customMaster.address, CUSTOM_ALLOWED_AMOUNT, ROLL_VALUE, 1n);
+        const before = await checkerState(customMaster.address);
+        expect(before.phase).toBe(1);
 
-        // The attacker (not the queried master) tries to vouch for W to trigger/cancel the roll.
-        const r = await respond(attacker, escrowWallet.address, 1n);
-        expect(r.transactions).toHaveTransaction({
-            to: S.ssm.address,
-            success: false,
-            exitCode: SsmErrors.ERR_VERIFY_SENDER_MISMATCH,
-        });
+        // A second escrow for the SAME (player, master) while the first is still verifying.
+        const r = await notify(customMaster.address, CUSTOM_ALLOWED_AMOUNT, ROLL_VALUE, 2n);
+        // The second intake is refunded to the player via W; no roll runs.
+        const escrow = findEscrowReturn(r, escrowWallet.address);
+        expect(escrow).not.toBeNull();
+        expect(escrow!.recipient).toEqualAddress(S.player.address);
         expect(readRollSymbols(r, S.ssm.address)).toBeNull();
-        // The genuine pending record is NOT cancelled by the forged reply.
-        expect(await S.ssm.getPendingRoll(escrowWallet.address)).not.toBeNull();
+
+        // The first verification is untouched, still awaiting its answer.
+        const after = await checkerState(customMaster.address);
+        expect(after.phase).toBe(1);
+        expect(after.deadline).toBe(before.deadline);
     });
 
-    // ---- Timeout reclaim -----------------------------------------------------
+    // ---- Timeout reclaim (through the real checker) --------------------------
 
-    it('an expired pending escrow can be reclaimed by the player (escrow refunded, record cleared)', async () => {
+    it('an expired escrow is reclaimed by the player through the checker (escrow refunded, checker gone)', async () => {
         await notify(customMaster.address, CUSTOM_ALLOWED_AMOUNT, ROLL_VALUE, 7n);
-        expect(await S.ssm.getPendingRoll(escrowWallet.address)).not.toBeNull();
 
-        // Warp past the verify TTL, then the player reclaims.
         S.blockchain.now = NOW + CUSTOM_VERIFY_TTL + 1;
-        const r = await S.ssm.sendReclaimExpiredEscrow(S.player.getSender(), toNano('0.2'), escrowWallet.address, 7n);
+        const checker = await openChecker(customMaster.address);
+        const r = await checker.sendReclaim(S.player.getSender(), toNano('0.2'), 7n);
 
         const escrow = findEscrowReturn(r, escrowWallet.address);
         expect(escrow).not.toBeNull();
         expect(escrow!.amount).toBe(CUSTOM_ALLOWED_AMOUNT);
         expect(escrow!.recipient).toEqualAddress(S.player.address);
-        expect(await S.ssm.getPendingRoll(escrowWallet.address)).toBeNull();
+        expect(await checkerGone(customMaster.address)).toBe(true);
     });
 
-    it('reclaim before the TTL is rejected (ERR_ESCROW_NOT_EXPIRED)', async () => {
+    it('reclaim before the TTL is rejected (ERR_CHECKER_NOT_EXPIRED); the checker survives', async () => {
         await notify(customMaster.address, CUSTOM_ALLOWED_AMOUNT, ROLL_VALUE, 7n);
-        const r = await S.ssm.sendReclaimExpiredEscrow(S.player.getSender(), toNano('0.2'), escrowWallet.address, 7n);
+        const checker = await openChecker(customMaster.address);
+        const r = await checker.sendReclaim(S.player.getSender(), toNano('0.2'), 7n);
         expect(r.transactions).toHaveTransaction({
-            to: S.ssm.address,
+            to: checker.address,
             success: false,
-            exitCode: SsmErrors.ERR_ESCROW_NOT_EXPIRED,
+            exitCode: SsmCheckerErrors.ERR_CHECKER_NOT_EXPIRED,
         });
-        expect(await S.ssm.getPendingRoll(escrowWallet.address)).not.toBeNull();
-    });
-
-    it('reclaim by a stranger (not player nor owner) is rejected (ERR_RECLAIM_NOT_AUTHORIZED)', async () => {
-        await notify(customMaster.address, CUSTOM_ALLOWED_AMOUNT, ROLL_VALUE, 7n);
-        S.blockchain.now = NOW + CUSTOM_VERIFY_TTL + 1;
-        const r = await S.ssm.sendReclaimExpiredEscrow(attacker.getSender(), toNano('0.2'), escrowWallet.address, 7n);
-        expect(r.transactions).toHaveTransaction({
-            to: S.ssm.address,
-            success: false,
-            exitCode: SsmErrors.ERR_RECLAIM_NOT_AUTHORIZED,
-        });
-        expect(await S.ssm.getPendingRoll(escrowWallet.address)).not.toBeNull();
-    });
-
-    it('reclaim of a non-existent escrow is rejected (ERR_NO_PENDING_ROLL)', async () => {
-        S.blockchain.now = NOW + CUSTOM_VERIFY_TTL + 1;
-        const r = await S.ssm.sendReclaimExpiredEscrow(S.player.getSender(), toNano('0.2'), escrowWallet.address, 7n);
-        expect(r.transactions).toHaveTransaction({
-            to: S.ssm.address,
-            success: false,
-            exitCode: SsmErrors.ERR_NO_PENDING_ROLL,
-        });
+        expect((await checkerState(customMaster.address)).phase).toBe(1);
     });
 });

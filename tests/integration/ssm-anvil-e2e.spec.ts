@@ -40,11 +40,12 @@ const ROLL_VALUE = toNano('1.6');
 async function setupE2E(): Promise<E2ESystem> {
     const base = await setupAnvil(); // GM, R*, jettonMinter, NFT printer + toolsInfo, jetton/games info
     const slotCode = await compile('SSMSlot');
+    const checkerCode = await compile('SSMChecker');
     const ssmCode = await compile('SoullessSlotMachine');
 
     const ssm = base.blockchain.openContract(
         SoullessSlotMachine.createFromConfig(
-            { ownerAddress: base.gameManager.address, ssmSlotCode: slotCode, rudaMasterAddress: base.jettonMinter.address },
+            { ownerAddress: base.gameManager.address, ssmSlotCode: slotCode, rudaMasterAddress: base.jettonMinter.address, ssmCheckerCode: checkerCode },
             ssmCode,
         ),
     );
