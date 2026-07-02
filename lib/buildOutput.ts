@@ -73,6 +73,8 @@ export interface SoullessSlotMachineCodes {
     soullessSlotMachine: ContractCodeInfo;
     /** SSMSlot — the ephemeral per-reel contract SSM deploys each roll. */
     ssmSlot?: ContractCodeInfo;
+    /** SSMChecker — the ephemeral custom-intake verifier SSM deploys per verification. */
+    ssmChecker?: ContractCodeInfo;
 }
 
 /** UBPS module codes: master + the four child contract types. */

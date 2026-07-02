@@ -23,7 +23,8 @@ export const RUDA_AMOUNT_100 = 100n;
 export const RUDA_AMOUNT_1000 = 1000n;
 export const CUSTOM_ALLOWED_AMOUNT = 1000000n; // exact raw, per brief
 
-export const MIN_ROLL_VALUE = toNano('1.0');
+export const MIN_ROLL_VALUE = toNano('1.3'); // bumped 1.0 -> 1.3 (gm-fix-1b): custom path funds a checker deploy + TEP-89 round-trip
+export const MIN_VERIFIED_ROLL_VALUE = toNano('0.8'); // floor a verified custom roll must still meet at SSM
 export const NFT_REWARD_BUDGET = toNano('0.3');
 export const RUDA_MINT_BUDGET = toNano('0.25');
 export const ESCROW_RETURN_BUDGET = toNano('0.06');
@@ -47,10 +48,14 @@ export const Opcodes = {
     OP_RETURN_EXCESSES_BACK: 0xd53276db,
     OP_SET_SSM_CONFIG: 0x5535e701,
     OP_SSM_BURN_STAKE: 0x5362726e, // "Sbrn" — native-stake burn (R1-wrapped)
-    // Custom-intake TEP-89 two-phase verification (GM-B-001).
-    OP_REQUEST_WALLET_ADDRESS: 0x2c76b973, // provide_wallet_address (SSM -> claimed master)
-    OP_RESPONSE_WALLET_ADDRESS: 0xd1735400, // take_wallet_address (master -> SSM)
-    OP_RECLAIM_EXPIRED_ESCROW: 0x5535e702, // player/owner reclaim of an expired escrow
+    // Custom-intake verification via the ephemeral SSMChecker child (GM-B-001 / gm-fix-1b).
+    OP_START_VERIFY: 0x5535e703, // SSM -> checker: begin verifying an escrow (Phase 1)
+    OP_VERIFIED_ROLL: 0x5535e704, // checker -> SSM: origin proven, run the roll (Phase 2)
+    OP_REFUND_ESCROW: 0x5535e705, // checker -> SSM: not verified, return the escrow
+    OP_RECLAIM: 0x5535e706, // player/SSM -> checker: reclaim an expired escrow
+    // TEP-89 discoverable-wallet exchange (checker <-> claimed master), byte-identical opcodes.
+    OP_REQUEST_WALLET_ADDRESS: 0x2c76b973, // provide_wallet_address (checker -> claimed master)
+    OP_RESPONSE_WALLET_ADDRESS: 0xd1735400, // take_wallet_address (master -> checker)
 } as const;
 
 // SSM error codes (contracts/soulless_slot_machine/static.tolk).
@@ -59,10 +64,17 @@ export const SsmErrors = {
     ERR_INSUFFICIENT_ROLL_VALUE: 945,
     ERR_BAD_FORWARD_PAYLOAD: 947,
     ERR_CUSTOM_ORIGIN_IS_NATIVE: 948,
-    ERR_NO_PENDING_ROLL: 949,
-    ERR_VERIFY_SENDER_MISMATCH: 950,
-    ERR_ESCROW_NOT_EXPIRED: 951,
-    ERR_RECLAIM_NOT_AUTHORIZED: 952,
+    ERR_INVALID_CHECKER_SENDER: 949,        // VerifiedRoll/RefundEscrow not from the recomputed checker address
+    ERR_INSUFFICIENT_VERIFIED_VALUE: 950,   // a verified custom roll arrived under-funded
+} as const;
+
+// SSMChecker error codes (contracts/soulless_slot_machine/ssm_checker_static.tolk).
+export const SsmCheckerErrors = {
+    ERR_CHECKER_INVALID_SSM_SENDER: 960,
+    ERR_CHECKER_NOT_MASTER: 961,
+    ERR_CHECKER_BAD_PHASE: 962,
+    ERR_CHECKER_NOT_EXPIRED: 963,
+    ERR_CHECKER_RECLAIM_NOT_AUTH: 964,
 } as const;
 
 // Custom-intake TEP-89 verification TTL (seconds) — mirror of CUSTOM_VERIFY_TTL.
@@ -147,6 +159,22 @@ export function encodeCustomRollPayload(master: Address, player: Address, queryI
     return beginCell().storeAddress(master).storeAddress(player).storeUint(queryId, 64).endCell();
 }
 
+// Checker -> SSM callback body (VerifiedRoll / RefundEscrow share the layout):
+// {player, master, escrowWallet, stake, queryId}. `op` selects which one.
+export function encodeCheckerCallback(
+    op: number,
+    args: { player: Address; master: Address; escrowWallet: Address; stake: bigint; queryId: bigint | number },
+): Cell {
+    return beginCell()
+        .storeUint(op, 32)
+        .storeAddress(args.player)
+        .storeAddress(args.master)
+        .storeAddress(args.escrowWallet)
+        .storeCoins(args.stake)
+        .storeUint(args.queryId, 64)
+        .endCell();
+}
+
 // RollContext {player, stake, isNative, origin, escrowWallet, queryId} — the
 // opaque cell carried through the slot chain (ssm_common.tolk).
 export function encodeRollContext(ctx: {
@@ -167,11 +195,12 @@ export function encodeRollContext(ctx: {
         .endCell();
 }
 
-// Owner (GM) config message.
-export function encodeSetSsmConfig(ssmSlotCode: Cell, rudaMasterAddress: Address): Cell {
+// Owner (GM) config message: SetSsmConfig {ssmSlotCode, ssmCheckerCode, rudaMasterAddress}.
+export function encodeSetSsmConfig(ssmSlotCode: Cell, ssmCheckerCode: Cell, rudaMasterAddress: Address): Cell {
     return beginCell()
         .storeUint(Opcodes.OP_SET_SSM_CONFIG, 32)
         .storeRef(ssmSlotCode)
+        .storeRef(ssmCheckerCode)
         .storeAddress(rudaMasterAddress)
         .endCell();
 }

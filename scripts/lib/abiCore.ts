@@ -51,6 +51,7 @@ export interface CompiledContracts {
     coordinateCellCode: Cell;
     ssmCode: Cell;
     ssmSlotCode: Cell;
+    ssmCheckerCode: Cell;
     // UBPS module (independent tree): master + 4 child types.
     ubpsCode: Cell;
     ubpsUnitCode: Cell;
@@ -86,6 +87,7 @@ export async function compileAllContracts(): Promise<CompiledContracts> {
         coordinateCellCode: await compile('CoordinateCell'),
         ssmCode: await compile('SoullessSlotMachine'),
         ssmSlotCode: await compile('SSMSlot'),
+        ssmCheckerCode: await compile('SSMChecker'),
         ubpsCode: await compile('UBPS'),
         ubpsUnitCode: await compile('UBPSUnit'),
         ubpsQuestionCode: await compile('UBPSQuestion'),
@@ -127,8 +129,9 @@ export function buildFullContractCodes(c: CompiledContracts): ContractCodes {
             },
             soulless_slot_machine: {
                 soullessSlotMachine: getContractCodeData(c.ssmCode),
-                // SSM embeds this code in its storage to deploy ephemeral slots.
+                // SSM embeds these codes in its storage to deploy ephemeral children.
                 ssmSlot: getContractCodeData(c.ssmSlotCode),
+                ssmChecker: getContractCodeData(c.ssmCheckerCode),
             },
             // UBPS module codes (master + 4 child types). Children deploy on demand;
             // the master embeds the child codes in its storage for address calc.
@@ -241,6 +244,7 @@ export function calculateNetworkAddresses(
     coordinateCellCode: Cell,
     ssmCode: Cell,
     ssmSlotCode: Cell,
+    ssmCheckerCode: Cell,
     jettonMinterCode: Cell,
     jettonWalletCode: Cell,
     subcontractCode: Cell,
@@ -284,6 +288,7 @@ export function calculateNetworkAddresses(
             ownerAddress: gameManager.address,
             ssmSlotCode,
             rudaMasterAddress: jettonMinter.address,
+            ssmCheckerCode,
         },
         ssmCode,
     );
@@ -391,6 +396,7 @@ export async function buildOfflineDeploymentData(
     const testnet = calculateNetworkAddresses(
         ownerAddress, effective.gameManagerCode, effective.retranslatorCode, effective.gameCode,
         effective.shipCode, effective.coordinateCellCode, effective.ssmCode, effective.ssmSlotCode,
+        effective.ssmCheckerCode,
         effective.jettonMinterCode, effective.jettonWalletCode, effective.subcontractCode,
         effective.nftPrinterCode, effective.passportPrinterCode, effective.nftPrinterItemCode, effective.passportPrinterItemCode,
         true, shipStationId, ownerPublicKey, jettonContentUri,
@@ -399,6 +405,7 @@ export async function buildOfflineDeploymentData(
     const mainnet = calculateNetworkAddresses(
         ownerAddress, effective.gameManagerCode, effective.retranslatorCode, effective.gameCode,
         effective.shipCode, effective.coordinateCellCode, effective.ssmCode, effective.ssmSlotCode,
+        effective.ssmCheckerCode,
         effective.jettonMinterCode, effective.jettonWalletCode, effective.subcontractCode,
         effective.nftPrinterCode, effective.passportPrinterCode, effective.nftPrinterItemCode, effective.passportPrinterItemCode,
         false, shipStationId, ownerPublicKey, jettonContentUri,

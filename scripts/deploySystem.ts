@@ -835,7 +835,7 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
         const { effective, wrapped } = applyLibraryMode(compiled, options.librarySelection);
         const {
             gameManagerCode, retranslatorCode, gameCode, shipCode, coordinateCellCode,
-            ssmCode, ssmSlotCode, jettonWalletCode, jettonMinterCode, subcontractCode,
+            ssmCode, ssmSlotCode, ssmCheckerCode, jettonWalletCode, jettonMinterCode, subcontractCode,
             sbtItemCode, sbtCollectionCode, sbtnItemCode, sbtnCollectionCode, nftItemCode,
             nftPrinterItemCode, passportPrinterItemCode, nftPrinterCode, passportPrinterCode,
             ubpsCode, ubpsUnitCode, ubpsQuestionCode, ubpsAnswerCode, ubpsBeliefSetCode,
@@ -861,7 +861,7 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
         console.log('Calculating addresses...');
         const addrFor = (codes: CompiledContracts, isTestnet: boolean) => calculateNetworkAddresses(
             ownerAddress, codes.gameManagerCode, codes.retranslatorCode, codes.gameCode, codes.shipCode, codes.coordinateCellCode,
-            codes.ssmCode, codes.ssmSlotCode, codes.jettonMinterCode, codes.jettonWalletCode, codes.subcontractCode,
+            codes.ssmCode, codes.ssmSlotCode, codes.ssmCheckerCode, codes.jettonMinterCode, codes.jettonWalletCode, codes.subcontractCode,
             codes.nftPrinterCode, codes.passportPrinterCode, codes.nftPrinterItemCode, codes.passportPrinterItemCode,
             isTestnet, shipStationId, ownerPublicKey, jettonContentUri,
             codes.ubpsCode, codes.ubpsUnitCode, codes.ubpsQuestionCode, codes.ubpsAnswerCode, codes.ubpsBeliefSetCode
@@ -929,6 +929,7 @@ async function hardRedeploy(options: CliOptions): Promise<void> {
                 ownerAddress: gameManager.address,
                 ssmSlotCode,
                 rudaMasterAddress: jettonMinter.address,
+                ssmCheckerCode,
             },
             ssmCode
         );
@@ -1404,7 +1405,7 @@ function buildRetroInstances(
         compiled.jettonMinterCode,
     );
     const ssm = SoullessSlotMachine.createFromConfig(
-        { ownerAddress: gameManager.address, ssmSlotCode: compiled.ssmSlotCode, rudaMasterAddress: jettonMinter.address },
+        { ownerAddress: gameManager.address, ssmSlotCode: compiled.ssmSlotCode, rudaMasterAddress: jettonMinter.address, ssmCheckerCode: compiled.ssmCheckerCode },
         compiled.ssmCode,
     );
     const ubps = UBPS.createFromConfig(

@@ -14,14 +14,17 @@ import {
     Opcodes,
     encodeRollIntakeData,
     encodeCustomRollPayload,
+    encodeCheckerCallback,
 } from './types';
 
-// Storage: { ownerAddress(=GM), ssmSlotCode (ref), rudaMasterAddress } —
-// see contracts/soulless_slot_machine/static.tolk (SSMStorage).
+// Storage: { ownerAddress(=GM), ssmSlotCode (ref), rudaMasterAddress, ssmCheckerCode (ref) } —
+// see contracts/soulless_slot_machine/static.tolk (SSMStorage). The old `pendingRolls` dict is
+// gone: custom-intake verification now lives on the ephemeral SSMChecker child (gm-fix-1b).
 export type SoullessSlotMachineConfig = {
     ownerAddress: Address;       // GameManager
     ssmSlotCode: Cell;           // compiled SSMSlot code
     rudaMasterAddress: Address;  // RUDA jetton minter (native NFT origin)
+    ssmCheckerCode: Cell;        // compiled SSMChecker code (custom-intake verifier child)
 };
 
 export function soullessSlotMachineConfigToCell(config: SoullessSlotMachineConfig): Cell {
@@ -29,7 +32,7 @@ export function soullessSlotMachineConfigToCell(config: SoullessSlotMachineConfi
         .storeAddress(config.ownerAddress)
         .storeRef(config.ssmSlotCode)
         .storeAddress(config.rudaMasterAddress)
-        .storeDict(null) // pendingRolls: empty map<address, PendingRoll> on a fresh SSM
+        .storeRef(config.ssmCheckerCode)
         .endCell();
 }
 
@@ -76,8 +79,9 @@ export class SoullessSlotMachine implements Contract {
     }
 
     // Custom intake PHASE 1: a TEP-74 transfer-notification straight from an escrow wallet
-    // (the `via` sender stands in for that wallet W). SSM records a pending roll and emits a
-    // RequestWalletAddress to the claimed master — it does NOT roll until Phase 2 verifies.
+    // (the `via` sender stands in for that wallet W). SSM deploys an ephemeral SSMChecker child
+    // keyed by (player, master) and hands it the escrow — it does NOT roll until the checker
+    // verifies the origin via TEP-89 and replies VerifiedRoll.
     async sendCustomTransferNotification(
         provider: ContractProvider,
         via: Sender,
@@ -100,53 +104,40 @@ export class SoullessSlotMachine implements Contract {
         });
     }
 
-    // Custom intake PHASE 2: the claimed master answers TEP-89. Drive this as the master
-    // (`via` == the master) vouching that `jettonWalletAddress` is its wallet for owner=SSM.
-    // A genuine reply returns the escrow wallet W that notified SSM in Phase 1.
-    async sendResponseWalletAddress(
+    // Raw checker-callback senders — used ONLY to prove the address gate: a VerifiedRoll /
+    // RefundEscrow that does NOT come from the recomputed SSMChecker address is rejected
+    // (ERR_INVALID_CHECKER_SENDER). In the real flow these come from the checker child.
+    async sendVerifiedRoll(
         provider: ContractProvider,
         via: Sender,
         value: bigint,
-        jettonWalletAddress: Address,
-        queryId: bigint | number = 0,
-        ownerAddress: Address | null = null,
+        args: { player: Address; master: Address; escrowWallet: Address; stake: bigint; queryId: bigint | number },
     ) {
         await provider.internal(via, {
             value,
             sendMode: SendMode.PAY_GAS_SEPARATELY,
-            body: beginCell()
-                .storeUint(Opcodes.OP_RESPONSE_WALLET_ADDRESS, 32)
-                .storeUint(queryId, 64)
-                .storeAddress(jettonWalletAddress)
-                .storeMaybeRef(ownerAddress ? beginCell().storeAddress(ownerAddress).endCell() : null)
-                .endCell(),
+            body: encodeCheckerCallback(Opcodes.OP_VERIFIED_ROLL, args),
         });
     }
 
-    // Custom timeout: reclaim an expired escrow (master never answered). Callable by the
-    // escrow's player or the SSM owner (GM).
-    async sendReclaimExpiredEscrow(
+    async sendRefundEscrow(
         provider: ContractProvider,
         via: Sender,
         value: bigint,
-        wallet: Address,
-        queryId: bigint | number = 0,
+        args: { player: Address; master: Address; escrowWallet: Address; stake: bigint; queryId: bigint | number },
     ) {
         await provider.internal(via, {
             value,
             sendMode: SendMode.PAY_GAS_SEPARATELY,
-            body: beginCell()
-                .storeUint(Opcodes.OP_RECLAIM_EXPIRED_ESCROW, 32)
-                .storeUint(queryId, 64)
-                .storeAddress(wallet)
-                .endCell(),
+            body: encodeCheckerCallback(Opcodes.OP_REFUND_ESCROW, args),
         });
     }
 
-    static setSsmConfigMessage(ssmSlotCode: Cell, rudaMasterAddress: Address): Cell {
+    static setSsmConfigMessage(ssmSlotCode: Cell, ssmCheckerCode: Cell, rudaMasterAddress: Address): Cell {
         return beginCell()
             .storeUint(Opcodes.OP_SET_SSM_CONFIG, 32)
             .storeRef(ssmSlotCode)
+            .storeRef(ssmCheckerCode)
             .storeAddress(rudaMasterAddress)
             .endCell();
     }
@@ -172,22 +163,18 @@ export class SoullessSlotMachine implements Contract {
         return r.stack.readAddress();
     }
 
-    // Pending custom-roll escrow keyed by wallet W. Returns null when no record exists.
-    async getPendingRoll(
-        provider: ContractProvider,
-        wallet: Address,
-    ): Promise<{ player: Address; stake: bigint; master: Address; queryId: bigint; deadline: number } | null> {
-        const r = await provider.get('get_pending_roll', [
-            { type: 'slice', cell: beginCell().storeAddress(wallet).endCell() },
+    async getCheckerCode(provider: ContractProvider): Promise<Cell> {
+        const r = await provider.get('get_checker_code', []);
+        return r.stack.readCell();
+    }
+
+    // Deterministic address of the ephemeral SSMChecker for a (player, master) verification.
+    async getCheckerAddress(provider: ContractProvider, player: Address, master: Address): Promise<Address> {
+        const r = await provider.get('get_checker_address', [
+            { type: 'slice', cell: beginCell().storeAddress(player).endCell() },
+            { type: 'slice', cell: beginCell().storeAddress(master).endCell() },
         ]);
-        const isFound = r.stack.readBoolean();
-        const player = r.stack.readAddress();
-        const stake = r.stack.readBigNumber();
-        const master = r.stack.readAddress();
-        const queryId = r.stack.readBigNumber();
-        const deadline = r.stack.readNumber();
-        if (!isFound) return null;
-        return { player, stake, master, queryId, deadline };
+        return r.stack.readAddress();
     }
 
     // Pure reward mapping: returns (kind, nftType, nftTier, mintRudaAmount, returnEscrow).
