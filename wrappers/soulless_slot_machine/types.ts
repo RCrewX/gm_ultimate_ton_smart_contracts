@@ -47,7 +47,26 @@ export const Opcodes = {
     OP_RETURN_EXCESSES_BACK: 0xd53276db,
     OP_SET_SSM_CONFIG: 0x5535e701,
     OP_SSM_BURN_STAKE: 0x5362726e, // "Sbrn" — native-stake burn (R1-wrapped)
+    // Custom-intake TEP-89 two-phase verification (GM-B-001).
+    OP_REQUEST_WALLET_ADDRESS: 0x2c76b973, // provide_wallet_address (SSM -> claimed master)
+    OP_RESPONSE_WALLET_ADDRESS: 0xd1735400, // take_wallet_address (master -> SSM)
+    OP_RECLAIM_EXPIRED_ESCROW: 0x5535e702, // player/owner reclaim of an expired escrow
 } as const;
+
+// SSM error codes (contracts/soulless_slot_machine/static.tolk).
+export const SsmErrors = {
+    ERR_INVALID_CUSTOM_AMOUNT: 944,
+    ERR_INSUFFICIENT_ROLL_VALUE: 945,
+    ERR_BAD_FORWARD_PAYLOAD: 947,
+    ERR_CUSTOM_ORIGIN_IS_NATIVE: 948,
+    ERR_NO_PENDING_ROLL: 949,
+    ERR_VERIFY_SENDER_MISMATCH: 950,
+    ERR_ESCROW_NOT_EXPIRED: 951,
+    ERR_RECLAIM_NOT_AUTHORIZED: 952,
+} as const;
+
+// Custom-intake TEP-89 verification TTL (seconds) — mirror of CUSTOM_VERIFY_TTL.
+export const CUSTOM_VERIFY_TTL = 3600;
 
 // ----- Symbol packing (2 bits per reel) -----
 export function packSymbols(reels: number[]): number {

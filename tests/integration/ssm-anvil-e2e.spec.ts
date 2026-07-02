@@ -7,6 +7,7 @@ import { SoullessSlotMachine } from '../../wrappers/soulless_slot_machine/Soulle
 import { SSMSlot } from '../../wrappers/soulless_slot_machine/SSMSlot';
 import { Retranslator } from '../../wrappers/game_manager/Retranslator';
 import { JettonWallet } from '../../wrappers/tep/jetton/JettonWallet';
+import { JettonMinter, jettonContentToCell } from '../../wrappers/tep/jetton/JettonMinter';
 import { NFTItem } from '../../wrappers/tep/nft/NFTItem';
 import {
     Opcodes as SsmOpcodes,
@@ -15,6 +16,7 @@ import {
     OUT_NFT,
     expectedOutcome,
     buildNativeRollForwardPayload,
+    encodeCustomRollPayload,
 } from '../../wrappers/soulless_slot_machine/types';
 import { AnvilRecipe, ANVIL_OPCODES, decodeNftContent } from '../../wrappers/game_manager/RetranslatorTypes';
 import { buildGameConstants } from '../../lib/gameConstants';
@@ -133,26 +135,53 @@ describe('SSM + ANVIL cross-system e2e', () => {
         expect(proven).toBe(true);
     });
 
-    it('custom roll: an NFT-outcome reward mints a real NFT with the custom origin', async () => {
-        const customWallet = await S.blockchain.treasury('e2eCustomWallet');
-        const customMaster = await S.blockchain.treasury('e2eCustomMaster');
+    it('custom roll: the FULL TEP-89 handshake against a real master mints an NFT with the custom origin', async () => {
+        // A real, distinct custom jetton master (NOT the RUDA master). The genuine escrow +
+        // TEP-89 discovery runs end to end: depositor transfers custom tokens to SSM → SSM's
+        // custom wallet W notifies SSM → SSM asks the master for its wallet-for-SSM → master
+        // answers W → SSM verifies and rolls with the custom master as origin.
+        const customMinter = S.blockchain.openContract(
+            JettonMinter.createFromConfig(
+                { admin: S.ownerAccount.address, content: jettonContentToCell({ type: 0, uri: 'custom' }), wallet_code: S.jettonWalletCode },
+                S.jettonMinterCode,
+            ),
+        );
+        await customMinter.sendDeploy(S.ownerAccount.getSender(), toNano('0.5'));
+
+        // Mint plenty of custom tokens to a depositor (one escrow == CUSTOM_ALLOWED_AMOUNT/roll).
+        const depositor = await S.blockchain.treasury('e2eCustomDepositor');
+        await customMinter.sendMint(
+            S.ownerAccount.getSender(),
+            depositor.address,
+            CUSTOM_ALLOWED_AMOUNT * 60n,
+            toNano('0.05'),
+            toNano('0.2'),
+        );
+        const depWallet = S.blockchain.openContract(
+            JettonWallet.createFromConfig({ ownerAddress: depositor.address, minterAddress: customMinter.address }, S.jettonWalletCode),
+        );
 
         let proven = false;
         for (let seed = 1; seed <= 40 && !proven; seed++) {
             S.blockchain.random = Buffer.alloc(32, (seed * 3) & 0xff);
             const idxBefore = Number(await S.retranslator.getNextNftIndex());
 
-            const r = await S.ssm.sendCustomTransferNotification(
-                customWallet.getSender(),
-                ROLL_VALUE,
+            // Depositor escrows CUSTOM_ALLOWED_AMOUNT to SSM with the CustomRollPayload. The
+            // whole handshake + roll resolves inside this one transfer cascade.
+            const payload = encodeCustomRollPayload(customMinter.address, player.address, seed);
+            const r = await depWallet.sendTransfer(
+                depositor.getSender(),
+                toNano('2.6'),          // total value: funds the escrow hop + the two TEP-89 hops + the roll
                 CUSTOM_ALLOWED_AMOUNT,
-                customMaster.address,
-                player.address,
-                seed,
+                S.ssm.address,          // transferRecipient == SSM (escrow lands in SSM's custom wallet W)
+                depositor.address,      // response/excess
+                null as any,            // customPayload
+                toNano('1.9'),          // forward TON carried to SSM (>= MIN_ROLL_VALUE after fees)
+                payload,
             );
 
             const symbols = rollSymbols(r, S.ssm.address);
-            if (symbols === null) continue;
+            if (symbols === null) continue; // this escrow's master didn't verify/roll this seed
             const exp = expectedOutcome(symbols, false, CUSTOM_ALLOWED_AMOUNT);
             if (exp.kind !== OUT_NFT) continue;
 
@@ -161,7 +190,7 @@ describe('SSM + ANVIL cross-system e2e', () => {
             const data = await item.getNftData();
             expect(data.ownerAddress).toEqualAddress(player.address);
             const c = decodeNftContent(data.individualContent!);
-            expect(c.origin).toEqualAddress(customMaster.address); // custom origin
+            expect(c.origin).toEqualAddress(customMinter.address); // proven custom origin (== the real master)
             expect(c.type).toBe(exp.nftType);
             expect(c.tier).toBe(exp.nftTier);
             proven = true;
@@ -201,6 +230,6 @@ describe('SSM + ANVIL cross-system e2e', () => {
         expect(Number(c.opcodes.anvil.OP_PRINTER_ANVIL_APPLY)).toBe(ANVIL_OPCODES.OP_PRINTER_ANVIL_APPLY);
         // Enums published for the consumer.
         expect(c.enums.AnvilRecipe.COMBINE).toBe(AnvilRecipe.COMBINE);
-        expect(c.schemaVersion).toBe(6); // v6 = UBPS module + R* named-slots games registry
+        expect(c.schemaVersion).toBe(12); // matches CONSTANTS_SCHEMA_VERSION (lib/gameConstants) + abi-guard
     });
 });

@@ -55,16 +55,42 @@ const ERR_INVALID_CUSTOM_AMOUNT = 944;    // custom stake != CUSTOM_ALLOWED_AMOU
 const ERR_INSUFFICIENT_ROLL_VALUE = 945;  // not enough TON attached to roll
 const ERR_INVALID_SLOT_RESULT_SENDER = 946; // RollResult not from the last slot
 const ERR_BAD_FORWARD_PAYLOAD = 947;      // custom forwardPayload malformed
+const ERR_CUSTOM_ORIGIN_IS_NATIVE = 948;  // custom path claimed the RUDA master as origin (banned)
+const ERR_NO_PENDING_ROLL = 949;          // TEP-89 reply / reclaim references no pending escrow
+const ERR_VERIFY_SENDER_MISMATCH = 950;   // ResponseWalletAddress not from the queried master (or wrong owner)
+const ERR_ESCROW_NOT_EXPIRED = 951;       // reclaim attempted before the verify TTL elapsed
+const ERR_RECLAIM_NOT_AUTHORIZED = 952;   // reclaim not from the escrow's player or the owner
 
 const GAS_COST_SET_CONFIG: coins = ton("0.01");
+
+// Custom-intake TEP-89 verification time-box: how long a pending (escrowed but not-yet-
+// verified) custom roll waits for its master to answer RequestWalletAddress. After it,
+// the escrow can be reclaimed to the player — this covers masters that never speak TEP-89.
+const CUSTOM_VERIFY_TTL: int = 3600;      // seconds (1 hour)
 
 // =============================================================================
 //  Storage
 // =============================================================================
+
+// One escrowed-but-unverified custom roll, awaiting the claimed master's TEP-89 answer.
+// Keyed in `pendingRolls` by the escrow wallet W (== the notification sender): the master's
+// ResponseWalletAddress must return exactly that W for the roll to run (proves the notifier
+// IS the master's wallet for owner=SSM). No roll ever starts on an unproven escrow.
+struct PendingRoll {
+    player: address         // who receives rewards / the refund
+    stake: coins            // escrowed custom jetton amount
+    master: address         // claimed jetton master == NFT origin; also the queried TEP-89 responder
+    queryId: uint64
+    deadline: uint32        // blockchain.now() + CUSTOM_VERIFY_TTL; after this the escrow is reclaimable
+}
+
 struct SSMStorage {
     ownerAddress: address       // GameManager (sole on-chain authority / native reward pipe)
     ssmSlotCode: cell           // SSMSlot code — to deploy slot0 and to verify the last slot
     rudaMasterAddress: address  // RUDA jetton minter; the "native" NFT origin
+    // Escrowed custom rolls pending TEP-89 verification, keyed by escrow wallet W. Appended
+    // at the END of the layout (fresh field): empty on a freshly deployed SSM.
+    pendingRolls: map<address, PendingRoll>
 }
 
 fun SSMStorage.load() {
@@ -208,6 +234,29 @@ struct CustomRollPayload {
     queryId: uint64
 }
 
+// TEP-89 discoverable-wallet exchange (opcodes byte-identical to tep/jetton/messages.tolk).
+// Phase 1: SSM asks the claimed master "what is your wallet for owner=SSM?".
+struct (0x2c76b973) RequestWalletAddress {
+    queryId: uint64
+    ownerAddress: address
+    includeOwnerAddress: bool
+}
+
+// Phase 2: the master answers. SSM matches jettonWalletAddress against the escrow wallet W
+// that notified it; only an exact match (from the queried master) starts the roll.
+struct (0xd1735400) ResponseWalletAddress {
+    queryId: uint64
+    jettonWalletAddress: address?
+    ownerAddress: Cell<address>?
+}
+
+// Owner- or player-callable reclaim of an expired pending escrow (a master that never
+// answered TEP-89). Refunds the escrow to the recorded player and drops the record.
+struct (0x5535e702) ReclaimExpiredEscrow {
+    queryId: uint64
+    wallet: address          // the escrow wallet W keying the pending record to reclaim
+}
+
 // Owner (GM) may re-point the slot code / RUDA master (e.g. after a slot redeploy).
 struct (0x5535e701) SetSsmConfig {
     ssmSlotCode: cell
@@ -276,6 +325,7 @@ fun calcDeployedSSM(
         ownerAddress,
         ssmSlotCode,
         rudaMasterAddress,
+        pendingRolls: createEmptyMap(),
     };
     return {
         stateInit: {
