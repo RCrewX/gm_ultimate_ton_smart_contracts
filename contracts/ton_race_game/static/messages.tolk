@@ -151,7 +151,11 @@ struct (0x5e55104b) SetSessionKey {
 
 // The session-key-signed payload for an external move/exit. Its cell hash is what the
 // session key signs. moveMode is a MoveMode (LEFT/UP/RIGHT/EXIT) — move/exit ONLY.
+// `shipAddress` is bound FIRST and asserted == this ship's address in the verify path,
+// so a move signed for one ship can NEVER be replayed against another ship that shares
+// the same session key + seqno (cross-instance replay, GM-B-005).
 struct SessionMoveInner {
+    shipAddress: address
     seqno: SHIP_SESSION_SEQNO_TYPE
     validUntil: SHIP_SESSION_VALID_UNTIL_TYPE
     moveMode: uint8

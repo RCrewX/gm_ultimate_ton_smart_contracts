@@ -472,6 +472,12 @@ fun onExternalMessage(inMsg: slice) {
 
     val inner = SessionMoveInner.fromCell(innerCell);
 
+    // 1.5) Instance binding — the signed move must target THIS ship. Without it, a move
+    //     signed for ship A would be accepted by ship B if B shares the same session key
+    //     and sits at the same seqno/validUntil (cross-instance replay, GM-B-005). Checked
+    //     BEFORE accept, so a mis-targeted external is dropped within the gas credit.
+    assert (inner.shipAddress == contract.getAddress()) throw ERR_WRONG_SHIP;
+
     // 2) Replay protection.
     assert (inner.seqno == session.sessionSeqno) throw ERR_BAD_SEQNO;
     // 3) Whole-session time-box.

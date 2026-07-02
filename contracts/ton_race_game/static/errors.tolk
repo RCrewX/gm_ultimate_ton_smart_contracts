@@ -63,6 +63,7 @@ const ERR_INVALID_SIGNATURE = 950   // external not signed by the stored session
 const ERR_BAD_SEQNO = 951           // replayed / out-of-order session seqno
 const ERR_EXPIRED = 952             // inner.validUntil != stored sessionValidUntil (sig not bound to this session)
 const ERR_SESSION_EXPIRED = 953     // now() > sessionValidUntil (session time-box passed)
+const ERR_WRONG_SHIP = 954          // signed move bound to a different ship (shipAddress != this ship) — GM-B-005
 const ERR_INVALID_MOVE_MODE = 956   // moveMode outside move/exit (LEFT/UP/RIGHT/EXIT)
 const ERR_BUDGET_EXHAUSTED = 957    // sessionMovesLeft == 0
 const ERR_INSUFFICIENT_FLOAT = 958  // ship float too low to fund the external move
