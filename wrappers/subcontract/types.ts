@@ -128,6 +128,7 @@ export function encodeReturnExcessesBack(msg: ReturnExcessesBack): Cell {
 
 // External message types
 export type ExternalInner = {
+    id: bigint; // uint256 — subcontract instance identity (MUST equal storage.id)
     seqno: number; // uint32
     validUntil: number; // uint32 (Unix timestamp)
     command: Forward | ForwardWithInit;
@@ -143,6 +144,7 @@ export type ExternalEnvelope = {
  * This is what gets signed - the cell hash is used as the message to sign
  * 
  * Layout:
+ * - id: uint256 (256 bits) — instance identity, asserted == storage.id on-chain
  * - seqno: uint32 (32 bits)
  * - validUntil: uint32 (32 bits)
  * - command: AllowedExternalCommand (union type, stored with opcode)
@@ -151,6 +153,7 @@ export type ExternalEnvelope = {
  */
 export function encodeExternalInner(inner: ExternalInner): Cell {
     const cell = beginCell()
+        .storeUint(inner.id, 256)
         .storeUint(inner.seqno, 32)
         .storeUint(inner.validUntil, 32);
     

@@ -1,336 +1,190 @@
 // SPDX-License-Identifier: UNLICENSED
-import { beginCell, toNano, SendMode, ContractProvider } from '@ton/core';
+import { beginCell, external, toNano, SendMode } from '@ton/core';
+import { SandboxContract } from '@ton/sandbox';
 import '@ton/test-utils';
-import { keyPairFromSecretKey } from '@ton/crypto';
+import { keyPairFromSeed } from '@ton/crypto';
 import { ContractSystem, initContractSystem, cleanupContractSystem } from '../test_utils';
-import { Subcontract } from '../../wrappers/subcontract/Subcontract';
+import { Subcontract, buildSubcontractExternal } from '../../wrappers/subcontract/Subcontract';
 import { Forward } from '../../wrappers/subcontract/types';
 
-describe('Subcontract - External Messages', () => {
-    let SC_System: ContractSystem;
-    let ownerKeyPair: { publicKey: Buffer; secretKey: Buffer };
-    
+// Subcontract error codes (contracts/subcontract/static.tolk).
+const ERR_INVALID_SIGNATURE = 930;
+const ERR_BAD_SEQNO = 931;
+const ERR_EXPIRED = 932;
+const ERR_WRONG_INSTANCE = 933;
+
+const NOW = 1_900_000_000;
+
+// =============================================================================
+// Owner-signed EXTERNAL message path. The sandbox ContractProvider does not expose
+// external(), so we deliver the envelope with `blockchain.sendMessage(external(...))`
+// (same pattern the Ship session spec uses) and read the real exit code. Every guard
+// (signature → id → seqno → validUntil) runs BEFORE acceptExternalMessage, so a bad
+// external is rejected at the computation phase and blockchain.sendMessage throws with
+// the exitCode — no state change, no gas drain.
+//
+// GM-A-013/014: the old suite swallowed every failure in try/catch and asserted only
+// `seqno did not increment` / `>= 0`, so it never proved WHICH check fired and never
+// exercised the accept path. This rewrite asserts concrete exit codes and adds the
+// cross-instance-replay regression that pins GM-A-001.
+// =============================================================================
+
+describe('Subcontract — external (owner-signed) messages', () => {
+    let SC: ContractSystem;
+    let ownerKp: { publicKey: Buffer; secretKey: Buffer };
+    let wrongKp: { publicKey: Buffer; secretKey: Buffer };
+    let ownerPub: bigint;
+
     beforeEach(async () => {
-        SC_System = await initContractSystem();
-        // Generate a key pair for external message signing
-        // Using a deterministic secret key for testing
-        const secretKey = Buffer.from('0'.repeat(128), 'hex'); // 64 bytes of zeros (for testing only)
-        ownerKeyPair = keyPairFromSecretKey(secretKey);
-    }, 100000);
+        SC = await initContractSystem();
+        SC.blockchain.now = NOW;
+        ownerKp = keyPairFromSeed(Buffer.alloc(32, 0x11));
+        wrongKp = keyPairFromSeed(Buffer.alloc(32, 0x22));
+        ownerPub = BigInt('0x' + ownerKp.publicKey.toString('hex'));
+    }, 120000);
 
     afterEach(() => {
-        cleanupContractSystem(SC_System);
-        SC_System = null as any;
+        cleanupContractSystem(SC);
+        SC = null as any;
     });
 
-    // Sandbox provider does not expose provider.external(), so happy-path is skipped here.
-    it.skip('Test external Forward message - happy path (requires provider.external)', async () => {
-        const subcontractId = 1n;
-        
-        const subcontract = SC_System.blockchain.openContract(Subcontract.createFromConfig({
-            ownerAddress: SC_System.ownerAccount.address,
-            id: subcontractId,
-            ownerPublicKey: BigInt('0x' + ownerKeyPair.publicKey.toString('hex')),
-        }, SC_System.subcontractCode));
-
-        await subcontract.sendDeploy(SC_System.ownerAccount.getSender(), toNano('0.5'));
-
-        // Top up contract balance
-        await SC_System.ownerAccount.send({
-            to: subcontract.address,
-            value: toNano('0.2'),
-        });
-
-        // Read seqno
-        const initialSeqno = await subcontract.getExtSeqno();
-        expect(initialSeqno).toBe(0);
-
-        // Create signed external Forward message
-        const recipient = await SC_System.blockchain.treasury('recipient');
-        const testMessage = beginCell()
-            .storeUint(0x12345678, 32)
-            .storeUint(42, 64)
-            .endCell();
-
-        const forwardAmount = toNano('0.05');
-        const command: Forward = {
-            queryId: 0n,
-            destination: recipient.address,
-            forwardTonAmount: forwardAmount,
-            bounce: false,
-            sendMode: SendMode.PAY_GAS_SEPARATELY,
-            messageBody: testMessage,
-        };
-
-        // Send external message (SandboxContract implements ContractProvider)
-        const provider = subcontract as unknown as ContractProvider;
-        await Subcontract.prototype.sendExternalForward.call(
-            subcontract,
-            provider,
-            ownerKeyPair.secretKey,
-            command
+    // Deploy a subcontract with the given id, funded so it can run a Forward.
+    async function deploySub(id: bigint, funded = toNano('1')): Promise<SandboxContract<Subcontract>> {
+        const sub = SC.blockchain.openContract(
+            Subcontract.createFromConfig(
+                { ownerAddress: SC.ownerAccount.address, id, ownerPublicKey: ownerPub },
+                SC.subcontractCode,
+            ),
         );
+        await sub.sendDeploy(SC.ownerAccount.getSender(), toNano('0.5'));
+        // Top the instance up so the external Forward has balance for gas + forward.
+        await SC.ownerAccount.send({ to: sub.address, value: funded });
+        return sub;
+    }
 
-        // Verify seqno incremented
-        const newSeqno = await subcontract.getExtSeqno();
-        expect(newSeqno).toBe(1);
+    function forwardCmd(dest: any, forwardTonAmount = toNano('0.05')): Forward {
+        return {
+            queryId: 0n,
+            destination: dest,
+            forwardTonAmount,
+            bounce: false,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            messageBody: beginCell().storeUint(0x12345678, 32).storeUint(42, 64).endCell(),
+        };
+    }
 
-        // Verify outgoing message was created
-        const balance = await subcontract.getTonBalance();
-        expect(balance).toBeGreaterThan(0n);
-    });
-
-    it('Test external Forward message - signature failure', async () => {
-        const subcontractId = 2n;
-        
-        const subcontract = SC_System.blockchain.openContract(Subcontract.createFromConfig({
-            ownerAddress: SC_System.ownerAccount.address,
-            id: subcontractId,
-            ownerPublicKey: BigInt('0x' + ownerKeyPair.publicKey.toString('hex')),
-        }, SC_System.subcontractCode));
-
-        await subcontract.sendDeploy(SC_System.ownerAccount.getSender(), toNano('0.5'));
-
-        // Top up contract balance
-        await SC_System.ownerAccount.send({
-            to: subcontract.address,
-            value: toNano('0.2'),
+    // Deliver a signed external and return its exit code (undefined = accepted/succeeded).
+    async function deliver(
+        sub: SandboxContract<Subcontract>,
+        args: { secretKey?: Buffer; id: bigint; seqno: number; validUntil: number; command: Forward },
+    ): Promise<number | undefined> {
+        const body = buildSubcontractExternal({
+            secretKey: args.secretKey ?? ownerKp.secretKey,
+            id: args.id,
+            seqno: args.seqno,
+            validUntil: args.validUntil,
+            command: args.command,
         });
-
-        // Create a message with wrong secret key
-        const wrongSecretKey = Buffer.from('1'.repeat(128), 'hex');
-        const recipient = await SC_System.blockchain.treasury('recipient');
-        const testMessage = beginCell()
-            .storeUint(0x12345678, 32)
-            .storeUint(42, 64)
-            .endCell();
-
-        const forwardAmount = toNano('0.05');
-        const command: Forward = {
-            queryId: 0n,
-            destination: recipient.address,
-            forwardTonAmount: forwardAmount,
-            bounce: false,
-            sendMode: SendMode.PAY_GAS_SEPARATELY,
-            messageBody: testMessage,
-        };
-
-        // Try to send external message with wrong key - should fail
-        const initialSeqno = await subcontract.getExtSeqno();
-        
-        // Note: External messages with invalid signatures are rejected by validators
-        // In sandbox, this might not throw, but the message won't be processed
-        // The seqno should not increment
         try {
-            const provider = subcontract as unknown as ContractProvider;
-            await Subcontract.prototype.sendExternalForward.call(
-                subcontract,
-                provider,
-                wrongSecretKey,
-                command
-            );
-        } catch (e) {
-            // Expected to fail
+            await SC.blockchain.sendMessage(external({ to: sub.address, body }));
+            return undefined;
+        } catch (e: any) {
+            return e?.exitCode;
         }
+    }
 
-        // Verify seqno did not increment
-        const finalSeqno = await subcontract.getExtSeqno();
-        expect(finalSeqno).toBe(initialSeqno);
-    });
+    it('happy path: a valid owner-signed Forward is accepted; seqno advances and the message is forwarded', async () => {
+        const sub = await deploySub(1n);
+        const recipient = await SC.blockchain.treasury('recipient');
+        expect(await sub.getExtSeqno()).toBe(0);
 
-    // Sandbox provider does not expose provider.external(), so replay test is skipped here.
-    it.skip('Test external Forward message - replay protection (requires provider.external)', async () => {
-        const subcontractId = 3n;
-        
-        const subcontract = SC_System.blockchain.openContract(Subcontract.createFromConfig({
-            ownerAddress: SC_System.ownerAccount.address,
-            id: subcontractId,
-            ownerPublicKey: BigInt('0x' + ownerKeyPair.publicKey.toString('hex')),
-        }, SC_System.subcontractCode));
+        const cmd = forwardCmd(recipient.address);
+        const body = buildSubcontractExternal({ secretKey: ownerKp.secretKey, id: 1n, seqno: 0, validUntil: NOW + 3600, command: cmd });
+        const res = await SC.blockchain.sendMessage(external({ to: sub.address, body }));
 
-        await subcontract.sendDeploy(SC_System.ownerAccount.getSender(), toNano('0.5'));
-
-        // Top up contract balance
-        await SC_System.ownerAccount.send({
-            to: subcontract.address,
-            value: toNano('0.2'),
+        // The subcontract forwarded to the recipient…
+        expect(res.transactions).toHaveTransaction({
+            from: sub.address,
+            to: recipient.address,
+            success: true,
         });
-
-        const recipient = await SC_System.blockchain.treasury('recipient');
-        const testMessage = beginCell()
-            .storeUint(0x12345678, 32)
-            .storeUint(42, 64)
-            .endCell();
-
-        const forwardAmount = toNano('0.05');
-        const command: Forward = {
-            queryId: 0n,
-            destination: recipient.address,
-            forwardTonAmount: forwardAmount,
-            bounce: false,
-            sendMode: SendMode.PAY_GAS_SEPARATELY,
-            messageBody: testMessage,
-        };
-
-        // Send first external message
-        const provider = subcontract as unknown as ContractProvider;
-        await Subcontract.prototype.sendExternalForward.call(
-            subcontract,
-            provider,
-            ownerKeyPair.secretKey,
-            command
-        );
-
-        // Verify seqno incremented
-        const seqnoAfterFirst = await subcontract.getExtSeqno();
-        expect(seqnoAfterFirst).toBe(1);
-
-        // Try to send the same message again - should fail with ERR_BAD_SEQNO
-        // Note: In sandbox, this might be handled differently, but the seqno check should prevent replay
-        try {
-            const provider2 = subcontract as unknown as ContractProvider;
-            await Subcontract.prototype.sendExternalForward.call(
-                subcontract,
-                provider2,
-                ownerKeyPair.secretKey,
-                command
-            );
-        } catch (e) {
-            // Expected to fail
-        }
-
-        // Verify seqno did not increment again (or only incremented once if first message succeeded)
-        const finalSeqno = await subcontract.getExtSeqno();
-        // Should be 1 (if replay was rejected) or 2 (if both went through, which shouldn't happen)
-        expect(finalSeqno).toBeLessThanOrEqual(2);
+        // …and the seqno advanced exactly once (replay protection armed).
+        expect(await sub.getExtSeqno()).toBe(1);
     });
 
-    it('Test external Forward message - expiration check', async () => {
-        const subcontractId = 4n;
-        
-        const subcontract = SC_System.blockchain.openContract(Subcontract.createFromConfig({
-            ownerAddress: SC_System.ownerAccount.address,
-            id: subcontractId,
-            ownerPublicKey: BigInt('0x' + ownerKeyPair.publicKey.toString('hex')),
-        }, SC_System.subcontractCode));
-
-        await subcontract.sendDeploy(SC_System.ownerAccount.getSender(), toNano('0.5'));
-
-        // Top up contract balance
-        await SC_System.ownerAccount.send({
-            to: subcontract.address,
-            value: toNano('0.2'),
-        });
-
-        const recipient = await SC_System.blockchain.treasury('recipient');
-        const testMessage = beginCell()
-            .storeUint(0x12345678, 32)
-            .storeUint(42, 64)
-            .endCell();
-
-        const forwardAmount = toNano('0.05');
-        const command: Forward = {
-            queryId: 0n,
-            destination: recipient.address,
-            forwardTonAmount: forwardAmount,
-            bounce: false,
-            sendMode: SendMode.PAY_GAS_SEPARATELY,
-            messageBody: testMessage,
-        };
-
-        // Create message with validUntil in the past
-        const pastTime = Math.floor(Date.now() / 1000) - 3600; // 1 hour ago
-
-        // Try to send expired message - should fail with ERR_EXPIRED
-        try {
-            const provider = subcontract as unknown as ContractProvider;
-            await Subcontract.prototype.sendExternalForward.call(
-                subcontract,
-                provider,
-                ownerKeyPair.secretKey,
-                command,
-                pastTime
-            );
-        } catch (e) {
-            // Expected to fail
-        }
-
-        // Verify seqno did not increment
-        const finalSeqno = await subcontract.getExtSeqno();
-        expect(finalSeqno).toBe(0);
+    it('a wrong-key signature is rejected (ERR_INVALID_SIGNATURE) with no state change', async () => {
+        const sub = await deploySub(1n);
+        const recipient = await SC.blockchain.treasury('recipient');
+        const exit = await deliver(sub, { secretKey: wrongKp.secretKey, id: 1n, seqno: 0, validUntil: NOW + 3600, command: forwardCmd(recipient.address) });
+        expect(exit).toBe(ERR_INVALID_SIGNATURE);
+        expect(await sub.getExtSeqno()).toBe(0);
     });
 
-    it('Test external Forward message - balance insufficient', async () => {
-        const subcontractId = 5n;
-        
-        const subcontract = SC_System.blockchain.openContract(Subcontract.createFromConfig({
-            ownerAddress: SC_System.ownerAccount.address,
-            id: subcontractId,
-            ownerPublicKey: BigInt('0x' + ownerKeyPair.publicKey.toString('hex')),
-        }, SC_System.subcontractCode));
-
-        await subcontract.sendDeploy(SC_System.ownerAccount.getSender(), toNano('0.5'));
-
-        // Don't top up - contract has minimal balance (from deploy)
-        const balance = await subcontract.getTonBalance();
-        // Balance will be deploy amount minus gas, so it will be less than deploy amount
-        expect(balance).toBeLessThan(toNano('0.5'));
-
-        const recipient = await SC_System.blockchain.treasury('recipient');
-        const testMessage = beginCell()
-            .storeUint(0x12345678, 32)
-            .storeUint(42, 64)
-            .endCell();
-
-        // Try to forward more than available balance
-        const forwardAmount = toNano('1.0'); // Much more than available
-        const command: Forward = {
-            queryId: 0n,
-            destination: recipient.address,
-            forwardTonAmount: forwardAmount,
-            bounce: false,
-            sendMode: SendMode.PAY_GAS_SEPARATELY,
-            messageBody: testMessage,
-        };
-
-        // Try to send external message - should fail with ERR_MESSAGE_VALUE_TOO_LOW
-        try {
-            const provider = subcontract as unknown as ContractProvider;
-            await Subcontract.prototype.sendExternalForward.call(
-                subcontract,
-                provider,
-                ownerKeyPair.secretKey,
-                command
-            );
-        } catch (e) {
-            // Expected to fail
-        }
-
-        // Verify seqno still incremented (wallet pattern - seqno updates before balance check)
-        // Actually, the seqno should increment even if the balance check fails
-        const finalSeqno = await subcontract.getExtSeqno();
-        // The seqno might be 1 if the message was accepted but failed later, or 0 if rejected early
-        expect(finalSeqno).toBeGreaterThanOrEqual(0);
+    it('an expired envelope is rejected (ERR_EXPIRED)', async () => {
+        const sub = await deploySub(1n);
+        const recipient = await SC.blockchain.treasury('recipient');
+        const exit = await deliver(sub, { id: 1n, seqno: 0, validUntil: NOW - 1, command: forwardCmd(recipient.address) });
+        expect(exit).toBe(ERR_EXPIRED);
+        expect(await sub.getExtSeqno()).toBe(0);
     });
 
-    it('Test getters for external message support', async () => {
-        const subcontractId = 6n;
-        
-        const subcontract = SC_System.blockchain.openContract(Subcontract.createFromConfig({
-            ownerAddress: SC_System.ownerAccount.address,
-            id: subcontractId,
-            ownerPublicKey: BigInt('0x' + ownerKeyPair.publicKey.toString('hex')),
-        }, SC_System.subcontractCode));
+    it('a replayed seqno is rejected (ERR_BAD_SEQNO)', async () => {
+        const sub = await deploySub(1n);
+        const recipient = await SC.blockchain.treasury('recipient');
+        // First valid external advances seqno 0 -> 1.
+        expect(await deliver(sub, { id: 1n, seqno: 0, validUntil: NOW + 3600, command: forwardCmd(recipient.address) })).toBeUndefined();
+        expect(await sub.getExtSeqno()).toBe(1);
+        // Re-sending seqno 0 is a replay.
+        const exit = await deliver(sub, { id: 1n, seqno: 0, validUntil: NOW + 3600, command: forwardCmd(recipient.address) });
+        expect(exit).toBe(ERR_BAD_SEQNO);
+        expect(await sub.getExtSeqno()).toBe(1);
+    });
 
-        await subcontract.sendDeploy(SC_System.ownerAccount.getSender(), toNano('0.5'));
+    it('an envelope signed for a different id is rejected (ERR_WRONG_INSTANCE)', async () => {
+        const sub = await deploySub(7n);
+        const recipient = await SC.blockchain.treasury('recipient');
+        // Correctly signed by the owner, correct seqno + validity, but bound to id=8 not 7.
+        const exit = await deliver(sub, { id: 8n, seqno: 0, validUntil: NOW + 3600, command: forwardCmd(recipient.address) });
+        expect(exit).toBe(ERR_WRONG_INSTANCE);
+        expect(await sub.getExtSeqno()).toBe(0);
+    });
 
-        // Test get_owner_public_key
-        const publicKey = await subcontract.getOwnerPublicKey();
-        expect(publicKey).toBe(BigInt('0x' + ownerKeyPair.publicKey.toString('hex')));
+    // GM-A-001 regression: two instances share the SAME ownerPublicKey and sit at the SAME
+    // seqno (0); only their `id` differs. An envelope that is fully valid for instance #1
+    // must be rejected by instance #2 — proving the signed payload is instance-bound and a
+    // cross-instance replay is impossible.
+    it('cross-instance replay: a valid envelope for instance #1 is rejected by instance #2', async () => {
+        const sub1 = await deploySub(100n);
+        const sub2 = await deploySub(200n);
+        const recipient = await SC.blockchain.treasury('recipient');
+        expect(await sub1.getExtSeqno()).toBe(0);
+        expect(await sub2.getExtSeqno()).toBe(0);
 
-        // Test get_ext_seqno
-        const seqno = await subcontract.getExtSeqno();
-        expect(seqno).toBe(0);
+        // Build a valid envelope for instance #1 (id=100, seqno=0).
+        const cmd = forwardCmd(recipient.address);
+        const envForSub1 = buildSubcontractExternal({ secretKey: ownerKp.secretKey, id: 100n, seqno: 0, validUntil: NOW + 3600, command: cmd });
+
+        // Deliver that exact envelope to instance #2 → rejected (id 100 != storage.id 200).
+        let exit: number | undefined;
+        try {
+            await SC.blockchain.sendMessage(external({ to: sub2.address, body: envForSub1 }));
+            exit = undefined;
+        } catch (e: any) {
+            exit = e?.exitCode;
+        }
+        expect(exit).toBe(ERR_WRONG_INSTANCE);
+        expect(await sub2.getExtSeqno()).toBe(0);
+
+        // The same envelope IS valid for its own instance #1.
+        const res = await SC.blockchain.sendMessage(external({ to: sub1.address, body: envForSub1 }));
+        expect(res.transactions).toHaveTransaction({ from: sub1.address, to: recipient.address, success: true });
+        expect(await sub1.getExtSeqno()).toBe(1);
+    });
+
+    it('getters expose ownerPublicKey + seqno', async () => {
+        const sub = await deploySub(6n);
+        expect(await sub.getOwnerPublicKey()).toBe(ownerPub);
+        expect(await sub.getExtSeqno()).toBe(0);
+        expect(await sub.getId()).toBe(6n);
     });
 });
-
