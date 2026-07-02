@@ -104,10 +104,12 @@ describe('GameManager Switch Games (via Retranslator)', () => {
         // game ADDRESS (the roll mechanics are covered by the ssm-* specs), so the
         // slot code / RUDA master values are immaterial to these switching tests.
         const ssmSlotCode = await compile('SSMSlot');
+        const ssmCheckerCode = await compile('SSMChecker');
         ssm = blockchain.openContract(SoullessSlotMachine.createFromConfig({
             ownerAddress: gameManager.address,
             ssmSlotCode,
             rudaMasterAddress: gameManager.address,
+            ssmCheckerCode,
         }, ssmCode));
         await ssm.sendDeploy(ownerAccount.getSender(), toNano('0.5'));
 
