@@ -385,6 +385,7 @@ export async function run(provider: NetworkProvider) {
         // Build and send external message
         const validUntil = Math.floor(Date.now() / 1000) + 600;
         const innerCell = encodeExternalInner({
+            id: uniqueId,
             seqno: extSeqno,
             validUntil,
             command: forwardWithInit,
@@ -454,6 +455,7 @@ export async function run(provider: NetworkProvider) {
         };
 
         const innerCellUp = encodeExternalInner({
+            id: uniqueId,
             seqno: extSeqno,
             validUntil: Math.floor(Date.now() / 1000) + 600,
             command: forwardUp,
@@ -521,6 +523,7 @@ export async function run(provider: NetworkProvider) {
         };
 
         const innerCellExit = encodeExternalInner({
+            id: uniqueId,
             seqno: extSeqno,
             validUntil: Math.floor(Date.now() / 1000) + 600,
             command: forwardExit,
@@ -558,6 +561,7 @@ export async function run(provider: NetworkProvider) {
                     extSeqno = await subcontract.getExtSeqno();
                     // Rebuild envelope with new seqno
                     const innerCellExitRetry = encodeExternalInner({
+                        id: uniqueId,
                         seqno: extSeqno,
                         validUntil: Math.floor(Date.now() / 1000) + 600,
                         command: forwardExit,

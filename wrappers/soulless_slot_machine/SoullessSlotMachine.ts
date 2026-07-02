@@ -29,6 +29,7 @@ export function soullessSlotMachineConfigToCell(config: SoullessSlotMachineConfi
         .storeAddress(config.ownerAddress)
         .storeRef(config.ssmSlotCode)
         .storeAddress(config.rudaMasterAddress)
+        .storeDict(null) // pendingRolls: empty map<address, PendingRoll> on a fresh SSM
         .endCell();
 }
 
@@ -74,8 +75,9 @@ export class SoullessSlotMachine implements Contract {
         });
     }
 
-    // Custom intake: a TEP-74 transfer-notification straight from SSM's own
-    // custom wallet (no sender gate — escrow is the trust anchor, decision 4).
+    // Custom intake PHASE 1: a TEP-74 transfer-notification straight from an escrow wallet
+    // (the `via` sender stands in for that wallet W). SSM records a pending roll and emits a
+    // RequestWalletAddress to the claimed master — it does NOT roll until Phase 2 verifies.
     async sendCustomTransferNotification(
         provider: ContractProvider,
         via: Sender,
@@ -94,6 +96,49 @@ export class SoullessSlotMachine implements Contract {
                 .storeCoins(jettonAmount)
                 .storeAddress(player) // transferInitiator (present)
                 .storeRef(encodeCustomRollPayload(master, player, queryId))
+                .endCell(),
+        });
+    }
+
+    // Custom intake PHASE 2: the claimed master answers TEP-89. Drive this as the master
+    // (`via` == the master) vouching that `jettonWalletAddress` is its wallet for owner=SSM.
+    // A genuine reply returns the escrow wallet W that notified SSM in Phase 1.
+    async sendResponseWalletAddress(
+        provider: ContractProvider,
+        via: Sender,
+        value: bigint,
+        jettonWalletAddress: Address,
+        queryId: bigint | number = 0,
+        ownerAddress: Address | null = null,
+    ) {
+        await provider.internal(via, {
+            value,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: beginCell()
+                .storeUint(Opcodes.OP_RESPONSE_WALLET_ADDRESS, 32)
+                .storeUint(queryId, 64)
+                .storeAddress(jettonWalletAddress)
+                .storeMaybeRef(ownerAddress ? beginCell().storeAddress(ownerAddress).endCell() : null)
+                .endCell(),
+        });
+    }
+
+    // Custom timeout: reclaim an expired escrow (master never answered). Callable by the
+    // escrow's player or the SSM owner (GM).
+    async sendReclaimExpiredEscrow(
+        provider: ContractProvider,
+        via: Sender,
+        value: bigint,
+        wallet: Address,
+        queryId: bigint | number = 0,
+    ) {
+        await provider.internal(via, {
+            value,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: beginCell()
+                .storeUint(Opcodes.OP_RECLAIM_EXPIRED_ESCROW, 32)
+                .storeUint(queryId, 64)
+                .storeAddress(wallet)
                 .endCell(),
         });
     }
@@ -125,6 +170,24 @@ export class SoullessSlotMachine implements Contract {
     async getSlotAddress(provider: ContractProvider, reelIndex: number): Promise<Address> {
         const r = await provider.get('get_slot_address', [{ type: 'int', value: BigInt(reelIndex) }]);
         return r.stack.readAddress();
+    }
+
+    // Pending custom-roll escrow keyed by wallet W. Returns null when no record exists.
+    async getPendingRoll(
+        provider: ContractProvider,
+        wallet: Address,
+    ): Promise<{ player: Address; stake: bigint; master: Address; queryId: bigint; deadline: number } | null> {
+        const r = await provider.get('get_pending_roll', [
+            { type: 'slice', cell: beginCell().storeAddress(wallet).endCell() },
+        ]);
+        const isFound = r.stack.readBoolean();
+        const player = r.stack.readAddress();
+        const stake = r.stack.readBigNumber();
+        const master = r.stack.readAddress();
+        const queryId = r.stack.readBigNumber();
+        const deadline = r.stack.readNumber();
+        if (!isFound) return null;
+        return { player, stake, master, queryId, deadline };
     }
 
     // Pure reward mapping: returns (kind, nftType, nftTier, mintRudaAmount, returnEscrow).

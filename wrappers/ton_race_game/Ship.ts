@@ -26,11 +26,13 @@ import { Coins, loadCoins } from '@ton/sandbox/dist/config/config.tlb-gen';
  */
 export function buildShipSessionMoveExternal(args: {
     sessionSecretKey: Buffer;
+    shipAddress: Address; // MUST equal the target ship's address (bound identity, GM-B-005)
     seqno: number;
     validUntil: number; // MUST equal the ship's stored sessionValidUntil
     moveMode: number; // MoveMode uint8 (LEFT/UP/RIGHT/EXIT)
 }): Cell {
     const innerCell = encodeSessionMoveInner({
+        shipAddress: args.shipAddress,
         seqno: args.seqno,
         validUntil: args.validUntil,
         moveMode: args.moveMode,

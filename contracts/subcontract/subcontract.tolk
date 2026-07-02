@@ -260,7 +260,12 @@ fun onExternalMessage(inMsg: slice) {
     
     // Parse signed inner
     val inner = ExternalInner.fromCell(innerCell);
-    
+
+    // Instance binding: the signed payload must target THIS subcontract. Without this,
+    // any sibling deployed with the same ownerPublicKey (but a different id) at an equal
+    // seqno would accept the very same envelope (cross-instance replay, GM-A-001).
+    assert(inner.id == storage.id) throw ERR_WRONG_INSTANCE;
+
     // Replay + time checks
     assert(inner.seqno == storage.extSeqno) throw ERR_BAD_SEQNO;
     assert(blockchain.now() < inner.validUntil) throw ERR_EXPIRED;

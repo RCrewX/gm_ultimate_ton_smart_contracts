@@ -25,6 +25,7 @@ const ERR_EXCESS_THRESHOLD_TOO_LOW = 929;  // Excess threshold is below minimum 
 const ERR_INVALID_SIGNATURE = 930;  // Invalid signature for external message
 const ERR_BAD_SEQNO = 931;  // Sequence number mismatch for external message
 const ERR_EXPIRED = 932;  // External message has expired (validUntil check failed)
+const ERR_WRONG_INSTANCE = 933;  // Signed payload bound to a different subcontract instance (id mismatch)
 
 const SEND_MODE_CARRY_ALL_REMAINING_BALANCE: uint8 = 128;
 // Storage
@@ -112,8 +113,12 @@ type AllowedExternalCommand =
     | Forward
     | ForwardWithInit
 
-// ExternalInner: signed data structure (what gets signed)
+// ExternalInner: signed data structure (what gets signed).
+// `id` is bound FIRST and asserted == storage.id in the verify path, so an envelope
+// signed for one instance (owner key + id) can NEVER be replayed against a sibling
+// instance that shares the same ownerPublicKey but has a different id (GM-A-001).
 struct ExternalInner {
+    id: uint256         // subcontract instance identity — MUST equal storage.id
     seqno: uint32
     validUntil: uint32  // Unix timestamp (blockchain.now)
     command: AllowedExternalCommand

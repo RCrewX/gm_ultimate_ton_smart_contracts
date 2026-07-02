@@ -536,8 +536,10 @@ export function encodeSetSessionKey(msg: SetSessionKey): Cell {
 }
 
 /** The session-key-signed payload. Its cell hash is what the session key signs. Layout MUST
- *  match struct SessionMoveInner in static/messages.tolk: seqno:u32 validUntil:u32 moveMode:u8 */
+ *  match struct SessionMoveInner in static/messages.tolk:
+ *  shipAddress:address seqno:u32 validUntil:u32 moveMode:u8 */
 export type SessionMoveInner = {
+    shipAddress: Address; // MUST equal the target ship's address (bound identity, GM-B-005)
     seqno: number;
     validUntil: number;
     moveMode: number; // MoveMode uint8: LEFT=0 UP=1 RIGHT=2 EXIT=3
@@ -545,6 +547,7 @@ export type SessionMoveInner = {
 
 export function encodeSessionMoveInner(inner: SessionMoveInner): Cell {
     return beginCell()
+        .storeAddress(inner.shipAddress)
         .storeUint(inner.seqno, SHIP_SESSION_SEQNO_BITS)
         .storeUint(inner.validUntil, SHIP_SESSION_VALID_UNTIL_BITS)
         .storeUint(inner.moveMode, SHIP_SESSION_MOVE_MODE_BITS)

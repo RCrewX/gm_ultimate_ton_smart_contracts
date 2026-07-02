@@ -3,6 +3,30 @@ import { Address, beginCell, Cell, Contract, contractAddress, ContractProvider, 
 import { sign } from '@ton/crypto';
 import { encodeForward, encodeForwardWithInit, encodeWithdraw, encodeSetRedirectExcess, encodeSetExcessThreshold, GAS_COST_FORWARD, GAS_COST_FORWARD_WITH_INIT, Forward, ForwardWithInit, Withdraw, SetRedirectExcess, SetExcessThreshold, encodeExternalInner, encodeExternalEnvelope, ExternalInner, encodeManualDeploy } from './types';
 
+/**
+ * Build the owner-signed external message body (the ExternalEnvelope) that authorises one
+ * Forward / ForwardWithInit. The signed inner binds the instance `id` FIRST — an envelope
+ * signed for one instance can never be replayed against a sibling with a different id
+ * (GM-A-001). Deliver it via `blockchain.sendMessage(external({ to, body }))` — the sandbox
+ * ContractProvider does not expose external(), so this mirrors the Ship session pattern.
+ */
+export function buildSubcontractExternal(args: {
+    secretKey: Buffer;
+    id: bigint;         // MUST equal the target subcontract's storage.id (or a foreign id, to prove rejection)
+    seqno: number;
+    validUntil: number;
+    command: Forward | ForwardWithInit;
+}): Cell {
+    const innerCell = encodeExternalInner({
+        id: args.id,
+        seqno: args.seqno,
+        validUntil: args.validUntil,
+        command: args.command,
+    });
+    const signature = sign(innerCell.hash(), args.secretKey);
+    return encodeExternalEnvelope({ signature, inner: innerCell });
+}
+
 export type SubcontractConfig = {
     ownerAddress: Address;
     id: bigint;
@@ -220,34 +244,36 @@ export class Subcontract implements Contract {
         command: Forward,
         validUntil?: number
     ): Promise<void> {
-        // Get current seqno
+        // Get current seqno + instance id (both bound into the signed inner)
         const seqno = await this.getExtSeqno(provider);
-        
+        const id = await this.getId(provider);
+
         // Set validUntil to 1 hour from now if not provided
         const validUntilTime = validUntil ?? Math.floor(Date.now() / 1000) + 3600;
-        
+
         // Build ExternalInner
         const inner: ExternalInner = {
+            id,
             seqno,
             validUntil: validUntilTime,
             command,
         };
-        
+
         // Encode inner cell
         const innerCell = encodeExternalInner(inner);
-        
+
         // Compute hash of inner cell (this is what gets signed)
         const hash = innerCell.hash();
-        
+
         // Sign the hash
         const signature = sign(hash, secretKey);
-        
+
         // Build envelope
         const envelope = encodeExternalEnvelope({
             signature,
             inner: innerCell,
         });
-        
+
         // Send external message
         await provider.external(envelope);
     }
@@ -265,19 +291,21 @@ export class Subcontract implements Contract {
         command: ForwardWithInit,
         validUntil?: number
     ): Promise<void> {
-        // Get current seqno
+        // Get current seqno + instance id (both bound into the signed inner)
         const seqno = await this.getExtSeqno(provider);
-        
+        const id = await this.getId(provider);
+
         // Set validUntil to 1 hour from now if not provided
         const validUntilTime = validUntil ?? Math.floor(Date.now() / 1000) + 3600;
-        
+
         // Build ExternalInner
         const inner: ExternalInner = {
+            id,
             seqno,
             validUntil: validUntilTime,
             command,
         };
-        
+
         // Encode inner cell
         const innerCell = encodeExternalInner(inner);
         
